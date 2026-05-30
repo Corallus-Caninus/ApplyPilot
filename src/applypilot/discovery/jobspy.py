@@ -8,9 +8,11 @@ search configuration YAML (searches.yaml) rather than being hardcoded.
 """
 
 import logging
+import re
 import sqlite3
 import time
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 from jobspy import scrape_jobs
 
@@ -115,6 +117,146 @@ def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> 
     return False
 
 
+# -- Site derivation from direct URLs ---------------------------------------
+
+# Known job board domains — jobs whose direct URL still points here keep
+# their original board site label and will be blocked from applying.
+_BOARD_DOMAINS = {
+    "indeed.com", "linkedin.com", "ziprecruiter.com", "glassdoor.com",
+    "google.com", "google.jobs",
+}
+
+# Multi-tenant ATS platforms where the company name is in the subdomain
+_SUBDOMAIN_ATS = {
+    "myworkdayjobs.com", "myworkday.com",
+    "applytojob.com",         # JazzHR
+    "greenhouse.io",          # boards.greenhouse.io
+    "pinpointhq.com",
+    "bamboohr.com",
+    "recruitee.com",
+    "comeet.com",
+}
+
+
+def _derive_site_from_url(apply_url: str | None, company_from_jobspy: str | None,
+                           board_label: str) -> str:
+    """Derive a site/company name from the direct application URL.
+
+    Uses a chain of heuristics:
+    1. If the direct URL points to a known job board domain → keep board label
+    2. For multi-tenant ATS domains (Workday, JazzHR, etc.) → extract company
+       from subdomain
+    3. For common ATS subdomains (jobs.lever.co, jobs.ashbyhq.com) → extract
+       company from subdomain or first path segment
+    4. For greenhouse.io → extract company from path
+    5. For grnh.se (Greenhouse short links) → fall back to JobSpy company field
+    6. For standard career sites (careers.company.com, company.com/careers) →
+       extract company from domain
+    7. Fall back to original board label
+    """
+    if not apply_url:
+        return board_label
+
+    parsed = urlparse(apply_url)
+    domain = parsed.netloc.lower()
+    path = parsed.path.strip("/")
+
+    # Strip www. prefix
+    if domain.startswith("www."):
+        domain = domain.removeprefix("www.")
+
+    # Check if URL still points to a job board → keep original label
+    for board_domain in _BOARD_DOMAINS:
+        if domain == board_domain or domain.endswith("." + board_domain):
+            return board_label
+
+    # Check multi-tenant ATS where company is the subdomain prefix
+    for ats_domain in _SUBDOMAIN_ATS:
+        if ats_domain in domain:
+            # company.ats_domain → extract company from subdomain
+            company_part = domain.removesuffix(ats_domain).strip(".")
+            if company_part:
+                # Workday: "nvidia.wd5.myworkdayjobs.com" → company = "nvidia"
+                # But there might be a ".wd5" suffix, take first part
+                parts = company_part.split(".")
+                result = _clean_company_name(parts[0])
+                if result:
+                    return result
+
+    # Lever: jobs.lever.co/companyname
+    if "jobs.lever.co" in domain:
+        comp = path.split("/")[0] if path else ""
+        if comp:
+            return _clean_company_name(comp)
+
+    # Ashby: jobs.ashbyhq.com/company
+    if "jobs.ashbyhq.com" in domain:
+        comp = path.split("/")[0] if path else ""
+        if comp:
+            return _clean_company_name(comp)
+
+    # Workable
+    if "workable.com" in domain and domain != "workable.com":
+        # company.workable.com
+        company_part = domain.removesuffix(".workable.com")
+        if company_part:
+            return _clean_company_name(company_part)
+
+    # Greenhouse full URLs: boards.greenhouse.io/companyname
+    if "greenhouse.io" in domain or "grnh.se" in domain:
+        # Try path first
+        comp = path.split("/")[0] if path and "greenhouse.io" in domain else ""
+        if comp and comp != "jobs":
+            return _clean_company_name(comp)
+        # Fall back to JobSpy company field for grnh.se short links
+        if company_from_jobspy:
+            return company_from_jobspy
+        return board_label
+
+    # Standard career sites: careers.company.com, company.com/careers
+    # Extract the main domain name
+    domain_parts = domain.split(".")
+    if len(domain_parts) >= 2:
+        main_domain = domain_parts[-2].title()
+        # Skip generic TLD-only names
+        if _clean_company_name(main_domain):
+            return main_domain
+
+    # Last resort: use company field from JobSpy if available
+    if company_from_jobspy:
+        return company_from_jobspy
+
+    return board_label
+
+
+def _clean_company_name(name: str) -> str:
+    """Convert a URL slug to a readable company name.
+
+    Handles:
+    - Hyphenated slugs: "data-ideology" → "Data Ideology"
+    - Workday tenant prefixes: "nvidia" → "Nvidia"
+    - Short company codes
+    """
+    # Remove workday version suffixes like "wd3", "wd5", "wd503"
+    name = re.sub(r'wd\d+$', '', name, flags=re.IGNORECASE)
+    name = re.sub(r'^wd\d+', '', name, flags=re.IGNORECASE)
+    # Remove trailing/leading dots or hyphens
+    name = name.strip(".-")
+    if not name or len(name) < 2:
+        return None
+    # Skip generic ATS subdomains that aren't company names
+    _GENERIC_SUBDOMAINS = {
+        "boards", "careers", "jobs", "apply", "job-boards", "career",
+        "recruiting", "employment", "hr", "staffing", "taleo",
+    }
+    if name.lower() in _GENERIC_SUBDOMAINS:
+        return None
+    # Split on hyphens, title case each part
+    parts = name.split("-")
+    title = " ".join(p.title() for p in parts if p)
+    return title.strip() if title.strip() else None
+
+
 # -- DB storage (JobSpy DataFrame -> SQLite) ---------------------------------
 
 def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tuple[int, int]:
@@ -165,6 +307,10 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tup
 
         # Extract apply URL if JobSpy provided it
         apply_url = str(row.get("job_url_direct", "")) if str(row.get("job_url_direct", "")) != "nan" else None
+
+        # Derive site from the direct URL instead of the source board
+        # This way we apply on the company's own ATS, not on Indeed/LinkedIn
+        site_label = _derive_site_from_url(apply_url, company, site_label)
 
         try:
             conn.execute(

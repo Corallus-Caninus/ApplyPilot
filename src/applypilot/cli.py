@@ -97,6 +97,10 @@ def run(
             "lenient: banned words ignored, LLM judge skipped (fastest, fewest API calls)."
         ),
     ),
+    rescore: bool = typer.Option(
+        False, "--rescore",
+        help="Re-score all jobs, not just unscored ones. Use after resume update.",
+    ),
 ) -> None:
     """Run pipeline stages: discover, enrich, score, tailor, cover, pdf."""
     _bootstrap()
@@ -136,6 +140,7 @@ def run(
         stream=stream,
         workers=workers,
         validation_mode=validation,
+        rescore=rescore,
     )
 
     if result.get("errors"):

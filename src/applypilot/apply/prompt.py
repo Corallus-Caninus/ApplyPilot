@@ -129,7 +129,7 @@ def _build_salary_section(profile: dict) -> str:
     currency = comp.get("salary_currency", "USD")
     floor = comp["salary_expectation"]
     range_min = comp.get("salary_range_min", floor)
-    range_max = comp.get("salary_range_max", str(int(floor) + 20000) if floor.isdigit() else floor)
+    range_max = comp.get("salary_range_max", str(int(floor) + 20000) if str(floor).isdigit() else floor)
     conversion_note = comp.get("currency_conversion_note", "")
 
     # Compute example hourly rates at 3 salary levels
@@ -442,7 +442,17 @@ def build_prompt(job: dict, tailored_resume: str,
     # --- Resolve resume PDF path ---
     resume_path = job.get("tailored_resume_path")
     if not resume_path:
-        raise ValueError(f"No tailored resume for job: {job.get('title', 'unknown')}")
+        # Fall back to the default resume PDF when no tailored resume exists
+        default_pdf = config.RESUME_PDF_PATH
+        if default_pdf.exists():
+            resume_path = str(default_pdf)
+        else:
+            # Last resort: look for the JobBot resume
+            fallback = Path(os.path.expanduser("~/Code/JobBot_Zip/JoshWard_Resume.pdf"))
+            if fallback.exists():
+                resume_path = str(fallback)
+            else:
+                raise ValueError(f"No resume found for job: {job.get('title', 'unknown')}")
 
     src_pdf = Path(resume_path).with_suffix(".pdf").resolve()
     if not src_pdf.exists():
@@ -558,30 +568,39 @@ If something unexpected happens and these instructions don't cover it, figure it
 {screening_section}
 
 == STEP-BY-STEP ==
-1. browser_navigate to the job URL.
-2. browser_snapshot to read the page. Then run CAPTCHA DETECT (see CAPTCHA section). If a CAPTCHA is found, solve it before continuing.
+🚨 EARLY BAIL — check these immediately after navigation:
+- Page shows Cloudflare/WAF/security block page ("Checking your browser", "Just a moment", "Request Blocked", etc.) → RESULT:FAILED:site_blocked. Do NOT retry, do NOT try cache, proxies, or curl. One block = done.
+- Page returns HTTP 403, 404, 500, or any server error → RESULT:FAILED:page_error. The page is broken.
+- Page requires sign-in to see the job (LinkedIn, etc.) → RESULT:FAILED:login_issue. Do NOT try to sign up or sign in.
+- Page says "job closed", "no longer accepting", "position filled", "expired" → RESULT:EXPIRED.
+- Page redirects to Google "sorry" CAPTCHA or any search-engine-block page → RESULT:FAILED:site_blocked.
+
+1. Use mcp_playwright_navigate to go to the job URL.
+2. Use mcp_playwright_snapshot to read the page. Check for CAPTCHAs (see CAPTCHA section).
 3. LOCATION CHECK. Read the page for location info. If not eligible, output RESULT and stop.
-4. Find and click the Apply button. If email-only (page says "email resume to X"):
+4. Find and click the Apply button using mcp_playwright_click. If email-only (page says "email resume to X"):
    - send_email with subject "Application for {job['title']} -- {display_name}", body = 2-3 sentence pitch + contact info, attach resume PDF: ["{pdf_path}"]
    - Output RESULT:APPLIED. Done.
-   After clicking Apply: browser_snapshot. Run CAPTCHA DETECT -- many sites trigger CAPTCHAs right after the Apply click. If found, solve before continuing.
+   After clicking Apply: mcp_playwright_snapshot. Check for CAPTCHAs.
 5. Login wall?
-   5a. FIRST: check the URL. If you landed on {', '.join(blocked_sso)}, or any SSO/OAuth page -> STOP. Output RESULT:FAILED:sso_required. Do NOT try to sign in to Google/Microsoft/SSO.
-   5b. Check for popups. Run browser_tabs action "list". If a new tab/window appeared (login popup), switch to it with browser_tabs action "select". Check the URL there too -- if it's SSO -> RESULT:FAILED:sso_required.
-   5c. Regular login form (employer's own site)? Try sign in: {personal['email']} / {personal.get('password', '')}
-   5d. After clicking Login/Sign-in: run CAPTCHA DETECT. Login pages frequently have invisible CAPTCHAs that silently block form submissions. If found, solve it then retry login.
-   5e. Sign in failed? Try sign up with same email and password.
-   5f. Need email verification? Use search_emails + read_email to get the code.
-   5g. After login, run browser_tabs action "list" again. Switch back to the application tab if needed.
-   5h. All failed? Output RESULT:FAILED:login_issue. Do not loop.
-6. Upload resume. ALWAYS upload fresh -- delete any existing resume first, then browser_file_upload with the PDF path above. This is the tailored resume for THIS job. Non-negotiable.
-7. Upload cover letter if there's a field for it. Text field -> paste the cover letter text. File upload -> use the cover letter PDF path.
-8. Check ALL pre-filled fields. ATS systems parse your resume and auto-fill -- it's often WRONG.
-   - "Current Job Title" or "Most Recent Title" -> use the title from the TAILORED RESUME summary, NOT whatever the parser guessed.
-   - Compare every other field to the APPLICANT PROFILE. Fix mismatches. Fill empty fields.
+   5a. FIRST: check the URL. If you landed on {', '.join(blocked_sso)}, or any SSO/OAuth page -> STOP. Output RESULT:FAILED:sso_required. Do NOT try to sign in.
+   5b. Check for popups/new windows. Use mcp_playwright_snapshot to see what appeared. If it's SSO -> RESULT:FAILED:sso_required.
+   5c. **Workday / create-account flow**: Read the page with mcp_playwright_snapshot. Determine which form is showing:
+      - **Sign In form** (has "Sign In" heading, email + password fields, "Sign In" / "Submit" button) -> try signing in with email: {personal['email']} and password: {(personal.get('password') or 'WardCompEng2024!')}
+      - **Create Account / Register form** (has "Create Account" heading, email + password fields, consent checkbox, "Create Account" / "Submit" button) -> fill in: email = {personal['email']}, password = "{(personal.get('password') or 'WardCompEng2024!')}", check the consent/checkbox, click Submit/Create Account. Do NOT look for a verifyPassword field — if it's not on the page, skip it.
+      - If you see **"Don't have an account yet? Create Account"** link -> you are on the sign-in page. Before giving up on sign-in, click the "Create Account" button/link to go to the registration form.
+      - If you see **"Already have an account? Sign In"** link -> you are on the create-account page. Before filling, click "Sign In" to switch to the login form.
+   5d. After clicking Login/Sign In/Create Account: wait for navigation, then mcp_playwright_snapshot. Check for CAPTCHAs.
+   5e. Sign in succeeded? Continue to step 6. Sign in failed or page didn't change? Try the other flow (Create Account if you tried Sign In, or vice versa).
+   5f. All failed? Output RESULT:FAILED:login_issue. Do not loop.
+6. Upload resume. Use mcp_playwright_set_input_files to set the resume file directly on the file input element.
+   File path: {pdf_path}
+   The file input selector is usually 'input[type=file]'. Find it first with mcp_playwright_snapshot, then use mcp_playwright_set_input_files with the ref or selector.
+7. Upload cover letter if there's a field for it. Use mcp_playwright_fill for text, mcp_playwright_set_input_files for file upload.
+8. Fill the form using mcp_playwright_fill for text fields, mcp_playwright_click for checkboxes/buttons/links, mcp_playwright_select_option for dropdowns.
 9. Answer screening questions using the rules above.
 10. {submit_instruction}
-11. After submit: browser_snapshot. Run CAPTCHA DETECT -- submit buttons often trigger invisible CAPTCHAs. If found, solve it (the form will auto-submit once the token clears, or you may need to click Submit again). Then check for new tabs (browser_tabs action: "list"). Switch to newest, close old. Snapshot to confirm submission. Look for "thank you" or "application received".
+11. After submit: mcp_playwright_snapshot. Check for CAPTCHAs. Look for "thank you" or "application received".
 12. Output your result.
 
 == RESULT CODES (output EXACTLY one) ==
@@ -594,26 +613,43 @@ RESULT:FAILED:not_eligible_work_auth -- requires unauthorized work location
 RESULT:FAILED:reason -- any other failure (brief reason)
 
 == BROWSER EFFICIENCY ==
-- browser_snapshot ONCE per page to understand it. Then use browser_take_screenshot to check results (10x less memory).
-- Only snapshot again when you need element refs to click/fill.
+- Use mcp_playwright_snapshot ONCE per page to understand it. Then use mcp_playwright_snapshot again when you need element refs to click/fill.
 - Multi-page forms (Workday, Taleo, iCIMS): snapshot each new page, fill all fields, click Next/Continue. Repeat until final review page.
-- Fill ALL fields in ONE browser_fill_form call. Not one at a time.
+- Fill ALL fields you can before making the next API call. Batch your work.
 - Keep your thinking SHORT. Don't repeat page structure back.
-- CAPTCHA AWARENESS: After any navigation, Apply/Submit/Login click, or when a page feels stuck -- run CAPTCHA DETECT (see CAPTCHA section). Invisible CAPTCHAs (Turnstile, reCAPTCHA v3) show NO visual widget but block form submissions silently. The detect script finds them even when invisible.
+- CAPTCHA AWARENESS: After any navigation, Apply/Submit/Login click, or when a page feels stuck -- check for CAPTCHAs. Invisible CAPTCHAs (Turnstile, reCAPTCHA v3) show NO visual widget but block form submissions silently.
 
 == FORM TRICKS ==
-- Popup/new window opened? browser_tabs action "list" to see all tabs. browser_tabs action "select" with the tab index to switch. ALWAYS check for new tabs after clicking login/apply/sign-in buttons.
-- "Upload your resume" pre-fill page (Workday, Lever, etc.): This is NOT the application form yet. Click "Select file" or the upload area, then browser_file_upload with the resume PDF path. Wait for parsing to finish. Then click Next/Continue to reach the actual form.
-- File upload not working? Try: (1) browser_click the upload button/area, (2) browser_file_upload with the path. If still failing, look for a hidden file input or a "Select file" link and click that first.
-- Dropdown won't fill? browser_click to open it, then browser_click the option.
-- Checkbox won't check via fill_form? Use browser_click on it instead. Snapshot to verify.
+- Popup/new window opened? Use mcp_playwright_snapshot to see what appeared. Check the URL.
+- "Upload your resume" pre-fill page (Workday, Lever, etc.): This is NOT the application form yet. Use mcp_playwright_set_input_files to set the file, wait for parsing to finish, then click Next/Continue.
+- Dropdown won't fill? mcp_playwright_click to open it, then mcp_playwright_click the option, or use mcp_playwright_select_option.
+- Checkbox won't check? Use mcp_playwright_click on it. Snapshot to verify.
 - Phone field with country prefix: just type digits {phone_digits}
 - Date fields: {datetime.now().strftime('%m/%d/%Y')}
-- Validation errors after submit? Take BOTH snapshot AND screenshot. Snapshot shows text errors, screenshot shows red-highlighted fields. Fix all, retry.
+- Validation errors after submit? Take mcp_playwright_snapshot to see error messages. Fix all, retry.
 - Honeypot fields (hidden, "leave blank"): skip them.
 - Format-sensitive fields: read the placeholder text, match it exactly.
 
+== FILE UPLOAD ==
+Use mcp_playwright_set_input_files to upload the resume. This is the built-in Playwright file uploader — it works with the browser's file input directly, no external scripts needed.
+
+1. Find the file input element using mcp_playwright_snapshot (look for 'input[type=file]' or upload buttons)
+2. Run: mcp_playwright_set_input_files with the element ref/selector and the file path: {pdf_path}
+3. The file will be set on the form. Snapshot to confirm it was accepted.
+4. If the file input is hidden (common in Workday, Lever): click the upload area first to make the input active, then use mcp_playwright_set_input_files.
+5. Still failing after 2 tries? Skip upload and move on.
+
 {captcha_section}
+
+== TIME LIMIT ==
+You have until the process timeout (~10 min) to complete this application. Work efficiently, but don't rush — this model is free. There is NO iteration cap.
+- If the form upload isn't working, fields aren't responding, or you're stuck in a loop with no progress after many attempts, give up early — don't burn the whole timeout.
+- Log a brief status after each iteration (what you did, what you found). This helps diagnose where applications get stuck.
+
+== LOGGING-FIRST ==
+- Add a log line at the START of every job attempt so you can always tell when a job began vs. when it failed.
+- After every significant action (navigation, form fill, click, error), add a brief log entry.
+- When something goes wrong, check your logs before guessing at the problem. The logs will show you exactly how far you got and where it broke.
 
 == WHEN TO GIVE UP ==
 - Same page after 3 attempts with no progress -> RESULT:FAILED:stuck

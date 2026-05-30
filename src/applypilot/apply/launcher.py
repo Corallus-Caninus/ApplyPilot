@@ -19,6 +19,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Thread
 
 from rich.console import Console
 from rich.live import Live
@@ -110,14 +111,13 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                        fit_score, location, full_description, cover_letter_path
                 FROM jobs
                 WHERE (url = ? OR application_url = ? OR application_url LIKE ? OR url LIKE ?)
-                  AND tailored_resume_path IS NOT NULL
                   AND apply_status != 'in_progress'
                 LIMIT 1
             """, (target_url, target_url, like, like)).fetchone()
         else:
             blocked_sites, blocked_patterns = _load_blocked()
             # Build parameterized filters to avoid SQL injection
-            params: list = [min_score]
+            params: list = []
             site_clause = ""
             if blocked_sites:
                 placeholders = ",".join("?" * len(blocked_sites))
@@ -131,15 +131,14 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                 SELECT url, title, site, application_url, tailored_resume_path,
                        fit_score, location, full_description, cover_letter_path
                 FROM jobs
-                WHERE tailored_resume_path IS NOT NULL
-                  AND (apply_status IS NULL OR apply_status = 'failed')
+                WHERE (apply_status IS NULL OR apply_status = 'failed')
                   AND (apply_attempts IS NULL OR apply_attempts < ?)
-                  AND fit_score >= ?
+                  AND (fit_score >= ? OR fit_score IS NULL)
                   {site_clause}
                   {url_clauses}
                 ORDER BY fit_score DESC, url
                 LIMIT 1
-            """, [config.DEFAULTS["max_apply_attempts"]] + params).fetchone()
+            """, [config.DEFAULTS["max_apply_attempts"], min_score] + params).fetchone()
 
         if not row:
             conn.rollback()
@@ -156,6 +155,23 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
             conn.commit()
             logger.info("Skipping manual ATS: %s", row["url"][:80])
             return None
+
+        # Safety net: skip if the effective apply URL is on a blocked board domain
+        # This catches edge cases where site derivation didn't redirect away
+        _BLOCKED_APPLY_DOMAINS = {"indeed.com", "linkedin.com", "ziprecruiter.com", "glassdoor.com"}
+        if apply_url:
+            from urllib.parse import urlparse
+            parsed = urlparse(apply_url)
+            apply_domain = parsed.netloc.lower().removeprefix("www.")
+            for blocked_domain in _BLOCKED_APPLY_DOMAINS:
+                if apply_domain == blocked_domain or apply_domain.endswith("." + blocked_domain):
+                    conn.execute(
+                        "UPDATE jobs SET apply_status = 'manual', apply_error = 'blocked_board_domain' WHERE url = ?",
+                        (row["url"],),
+                    )
+                    conn.commit()
+                    logger.info("Skipping blocked board domain: %s", apply_url[:80])
+                    return None
 
         now = datetime.now(timezone.utc).isoformat()
         conn.execute("""
@@ -317,30 +333,20 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         dry_run=dry_run,
     )
 
-    # Write per-worker MCP config
+    # Write per-worker MCP config (needed for Playwright MCP if using claude)
     mcp_config_path = config.APP_DIR / f".mcp-apply-{worker_id}.json"
     mcp_config_path.write_text(json.dumps(_make_mcp_config(port)), encoding="utf-8")
 
-    # Build claude command
+    # Use our Hermes agent instead of Claude Code
+    hermes_path = os.path.expanduser("~/Code/hermes/fully_automatic_holographic")
+    if not os.path.exists(hermes_path):
+        return "failed:hermes_not_found", 0
     cmd = [
-        "claude",
-        "--model", model,
-        "-p",
-        "--mcp-config", str(mcp_config_path),
-        "--permission-mode", "bypassPermissions",
-        "--no-session-persistence",
-        "--disallowedTools", (
-            "mcp__gmail__draft_email,mcp__gmail__modify_email,"
-            "mcp__gmail__delete_email,mcp__gmail__download_attachment,"
-            "mcp__gmail__batch_modify_emails,mcp__gmail__batch_delete_emails,"
-            "mcp__gmail__create_label,mcp__gmail__update_label,"
-            "mcp__gmail__delete_label,mcp__gmail__get_or_create_label,"
-            "mcp__gmail__list_email_labels,mcp__gmail__create_filter,"
-            "mcp__gmail__list_filters,mcp__gmail__get_filter,"
-            "mcp__gmail__delete_filter"
-        ),
-        "--output-format", "stream-json",
-        "--verbose", "-",
+        hermes_path,
+        "chat",
+        "-v",          # verbose
+        "-q",          # query
+        agent_prompt,
     ]
 
     env = os.environ.copy()
@@ -349,7 +355,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 
     worker_dir = reset_worker_dir(worker_id)
 
-    update_state(worker_id, status="applying", job_title=job["title"],
+    update_state(worker_id, status="applying", job_title=job['title'],
                  company=job.get("site", ""), score=job.get("fit_score", 0),
                  start_time=time.time(), actions=0, last_action="starting")
     add_event(f"[W{worker_id}] Starting: {job['title'][:40]} @ {job.get('site', '')}")
@@ -365,13 +371,11 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     )
 
     start = time.time()
-    stats: dict = {}
     proc = None
 
     try:
         proc = subprocess.Popen(
             cmd,
-            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -379,69 +383,33 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             errors="replace",
             env=env,
             cwd=str(worker_dir),
+            start_new_session=True,
         )
         with _claude_lock:
             _claude_procs[worker_id] = proc
 
-        proc.stdin.write(agent_prompt)
-        proc.stdin.close()
-
         text_parts: list[str] = []
+        stdout_lines: list[str] = []
         with open(worker_log, "a", encoding="utf-8") as lf:
             lf.write(log_header)
 
-            for line in proc.stdout:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    msg = json.loads(line)
-                    msg_type = msg.get("type")
-                    if msg_type == "assistant":
-                        for block in msg.get("message", {}).get("content", []):
-                            bt = block.get("type")
-                            if bt == "text":
-                                text_parts.append(block["text"])
-                                lf.write(block["text"] + "\n")
-                            elif bt == "tool_use":
-                                name = (
-                                    block.get("name", "")
-                                    .replace("mcp__playwright__", "")
-                                    .replace("mcp__gmail__", "gmail:")
-                                )
-                                inp = block.get("input", {})
-                                if "url" in inp:
-                                    desc = f"{name} {inp['url'][:60]}"
-                                elif "ref" in inp:
-                                    desc = f"{name} {inp.get('element', inp.get('text', ''))}"[:50]
-                                elif "fields" in inp:
-                                    desc = f"{name} ({len(inp['fields'])} fields)"
-                                elif "paths" in inp:
-                                    desc = f"{name} upload"
-                                else:
-                                    desc = name
-
-                                lf.write(f"  >> {desc}\n")
-                                ws = get_state(worker_id)
-                                cur_actions = ws.actions if ws else 0
-                                update_state(worker_id,
-                                             actions=cur_actions + 1,
-                                             last_action=desc[:35])
-                    elif msg_type == "result":
-                        stats = {
-                            "input_tokens": msg.get("usage", {}).get("input_tokens", 0),
-                            "output_tokens": msg.get("usage", {}).get("output_tokens", 0),
-                            "cache_read": msg.get("usage", {}).get("cache_read_input_tokens", 0),
-                            "cache_create": msg.get("usage", {}).get("cache_creation_input_tokens", 0),
-                            "cost_usd": msg.get("total_cost_usd", 0),
-                            "turns": msg.get("num_turns", 0),
-                        }
-                        text_parts.append(msg.get("result", ""))
-                except json.JSONDecodeError:
-                    text_parts.append(line)
+            # Collect output in a daemon thread so the main thread can enforce a timeout
+            def _reader():
+                for raw_line in proc.stdout:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    stdout_lines.append(line)
                     lf.write(line + "\n")
 
-        proc.wait(timeout=300)
+            reader_thread = Thread(target=_reader, daemon=True)
+            reader_thread.start()
+
+            # Wait for the process to finish with a real timeout
+            proc.wait(timeout=300)  # 5 min timeout per job
+            reader_thread.join(timeout=5)
+            text_parts = stdout_lines
+
         returncode = proc.returncode
         proc = None
 
@@ -456,42 +424,54 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         job_log = config.LOG_DIR / f"claude_{ts}_w{worker_id}_{job.get('site', 'unknown')[:20]}.txt"
         job_log.write_text(output, encoding="utf-8")
 
-        if stats:
-            cost = stats.get("cost_usd", 0)
-            ws = get_state(worker_id)
-            prev_cost = ws.total_cost if ws else 0.0
-            update_state(worker_id, total_cost=prev_cost + cost)
-
         def _clean_reason(s: str) -> str:
-            return re.sub(r'[*`"]+$', '', s).strip()
+            return re.sub(r'[*`\"]+$', '', s).strip()
 
-        for result_status in ["APPLIED", "EXPIRED", "CAPTCHA", "LOGIN_ISSUE"]:
-            if f"RESULT:{result_status}" in output:
-                add_event(f"[W{worker_id}] {result_status} ({elapsed}s): {job['title'][:30]}")
-                update_state(worker_id, status=result_status.lower(),
-                             last_action=f"{result_status} ({elapsed}s)")
-                return result_status.lower(), duration_ms
+        # Scan output lines in REVERSE so we find the agent's final ACTUAL
+        # result, not prompt template text containing "RESULT:APPLIED".
+        output_lines = output.split("\n")
+        result_line = None
+        for i in range(len(output_lines) - 1, -1, -1):
+            line = output_lines[i].strip()
+            if "RESULT:APPLIED" in line:
+                result_line = ("applied", "applied")
+                break
+            elif "RESULT:FAILED" in line:
+                reason = (
+                    line.split("RESULT:FAILED:")[-1].strip()
+                    if ":FAILED:" in line
+                    else "unknown"
+                )
+                reason = _clean_reason(reason)
+                result_line = (f"failed:{reason}", reason)
+                break
+            elif "RESULT:EXPIRED" in line:
+                result_line = ("expired", "expired")
+                break
+            elif "RESULT:CAPTCHA" in line:
+                result_line = ("captcha", "captcha")
+                break
+            elif "RESULT:LOGIN_ISSUE" in line:
+                result_line = ("login_issue", "login_issue")
+                break
 
-        if "RESULT:FAILED" in output:
-            for out_line in output.split("\n"):
-                if "RESULT:FAILED" in out_line:
-                    reason = (
-                        out_line.split("RESULT:FAILED:")[-1].strip()
-                        if ":" in out_line[out_line.index("FAILED") + 6:]
-                        else "unknown"
-                    )
-                    reason = _clean_reason(reason)
-                    PROMOTE_TO_STATUS = {"captcha", "expired", "login_issue"}
-                    if reason in PROMOTE_TO_STATUS:
-                        add_event(f"[W{worker_id}] {reason.upper()} ({elapsed}s): {job['title'][:30]}")
-                        update_state(worker_id, status=reason,
-                                     last_action=f"{reason.upper()} ({elapsed}s)")
-                        return reason, duration_ms
-                    add_event(f"[W{worker_id}] FAILED ({elapsed}s): {reason[:30]}")
-                    update_state(worker_id, status="failed",
-                                 last_action=f"FAILED: {reason[:25]}")
-                    return f"failed:{reason}", duration_ms
-            return "failed:unknown", duration_ms
+        if result_line:
+            status_key, display_status = result_line
+            if status_key == "applied":
+                add_event(f"[W{worker_id}] APPLIED ({elapsed}s): {job['title'][:30]}")
+                update_state(worker_id, status="applied",
+                             last_action=f"APPLIED ({elapsed}s)")
+                return "applied", duration_ms
+            PROMOTE_TO_STATUS = {"captcha", "expired", "login_issue"}
+            if display_status in PROMOTE_TO_STATUS:
+                add_event(f"[W{worker_id}] {display_status.upper()} ({elapsed}s): {job['title'][:30]}")
+                update_state(worker_id, status=display_status,
+                             last_action=f"{display_status.upper()} ({elapsed}s)")
+                return display_status, duration_ms
+            add_event(f"[W{worker_id}] FAILED ({elapsed}s): {display_status[:30]}")
+            update_state(worker_id, status="failed",
+                         last_action=f"FAILED: {display_status[:25]}")
+            return status_key, duration_ms
 
         add_event(f"[W{worker_id}] NO RESULT ({elapsed}s)")
         update_state(worker_id, status="failed", last_action=f"no result ({elapsed}s)")
@@ -502,6 +482,15 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         elapsed = int(time.time() - start)
         add_event(f"[W{worker_id}] TIMEOUT ({elapsed}s)")
         update_state(worker_id, status="failed", last_action=f"TIMEOUT ({elapsed}s)")
+        # Kill the entire process group, not just the parent process
+        # Hermes spawns child processes (Playwright MCP server, terminal tools)
+        # that survive a regular kill — use SIGKILL on the group
+        if proc and proc.poll() is None:
+            try:
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
         return "failed:timeout", duration_ms
     except Exception as e:
         duration_ms = int((time.time() - start) * 1000)
@@ -598,10 +587,10 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
 
         chrome_proc = None
         try:
-            add_event(f"[W{worker_id}] Launching Chrome...")
-            chrome_proc = launch_chrome(worker_id, port=port, headless=headless)
+            # Use user's already-running Chrome on port 9515 instead of launching a new instance
+            add_event(f"[W{worker_id}] Connecting to Chrome on port 9515...")
 
-            result, duration_ms = run_job(job, port=port, worker_id=worker_id,
+            result, duration_ms = run_job(job, port=9515, worker_id=worker_id,
                                             model=model, dry_run=dry_run)
 
             if result == "skipped":
@@ -660,7 +649,7 @@ def main(limit: int = 1, target_url: str | None = None,
         limit: Max jobs to apply to (0 or with continuous=True means run forever).
         target_url: Apply to a specific URL.
         min_score: Minimum fit_score threshold.
-        headless: Run Chrome in headless mode.
+        headless: Run Chrome headless.
         model: Claude model name.
         dry_run: Don't click Submit.
         continuous: Run forever, polling for new jobs.

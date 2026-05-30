@@ -17,6 +17,9 @@ blocked:
     - "accenture"
     - "AccentureCareers"
     - "Workopolis"
+    - "indeed"
+    - "linkedin"
+    - "Thomson Reuters"
   url_patterns:
     - "%glassdoor%"
     - "%google.com/about/careers%"
