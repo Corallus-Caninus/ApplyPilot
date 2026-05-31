@@ -561,6 +561,18 @@ If something unexpected happens and these instructions don't cover it, figure it
 - NEVER click "Allow" on any browser permission popup. Always deny/block.
 - If the site is NOT a job application form (it's a profile builder, skills marketplace, talent network signup, coding assessment platform) -> RESULT:FAILED:not_a_job_application
 
+== DIALOG HANDLING ==
+CRITICAL: Do NOT kill, restart, or spawn any playwright-mcp server processes. The MCP server is managed by the launcher. If MCP tools seem unreachable, they will auto-recover — just retry the tool call. Never run "kill" on playwright-mcp processes.
+
+If a browser tool call fails because of a dialog ("Leave site?", alert, confirm, prompt):
+1. Try mcp_playwright_browser_handle_dialog with accept=false
+2. If that doesn't work — kill and restart Chrome via terminal:
+   Run: pkill -f "remote-debugging-port=9515"
+   Wait 2 seconds
+   Then run: bash /home/jward/Code/applypilot/start-chrome.sh
+   Wait 5 seconds
+3. Retry your navigation. The fresh Chrome has no dialogs.
+
 {location_check}
 
 {salary_section}
@@ -574,6 +586,7 @@ If something unexpected happens and these instructions don't cover it, figure it
 - Page requires sign-in to see the job (LinkedIn, etc.) → RESULT:FAILED:login_issue. Do NOT try to sign up or sign in.
 - Page says "job closed", "no longer accepting", "position filled", "expired" → RESULT:EXPIRED.
 - Page redirects to Google "sorry" CAPTCHA or any search-engine-block page → RESULT:FAILED:site_blocked.
+- A browser dialog/popup appears ("Leave site?", "Confirm", "Changes you made may not be saved") → use mcp_playwright_browser_handle_dialog with accept=false to dismiss it immediately. Never let dialogs block you.
 
 1. Use mcp_playwright_navigate to go to the job URL.
 2. Use mcp_playwright_snapshot to read the page. Check for CAPTCHAs (see CAPTCHA section).
@@ -586,13 +599,20 @@ If something unexpected happens and these instructions don't cover it, figure it
    5a. FIRST: check the URL. If you landed on {', '.join(blocked_sso)}, or any SSO/OAuth page -> STOP. Output RESULT:FAILED:sso_required. Do NOT try to sign in.
    5b. Check for popups/new windows. Use mcp_playwright_snapshot to see what appeared. If it's SSO -> RESULT:FAILED:sso_required.
    5c. **Workday / create-account flow**: Read the page with mcp_playwright_snapshot. Determine which form is showing:
-      - **Sign In form** (has "Sign In" heading, email + password fields, "Sign In" / "Submit" button) -> try signing in with email: {personal['email']} and password: {(personal.get('password') or 'WardCompEng2024!')}
-      - **Create Account / Register form** (has "Create Account" heading, email + password fields, consent checkbox, "Create Account" / "Submit" button) -> fill in: email = {personal['email']}, password = "{(personal.get('password') or 'WardCompEng2024!')}", check the consent/checkbox, click Submit/Create Account. Do NOT look for a verifyPassword field — if it's not on the page, skip it.
+      - **Sign In form** (has "Sign In" heading, email + password fields, "Sign In" / "Submit" button) -> try signing in with email: {personal['email']} and password: {personal.get('password', '')}
+      - **Create Account / Register form** (has "Create Account" heading, email + password fields, consent checkbox, "Create Account" / "Submit" button) -> fill in: email = {personal['email']}, password = "{personal.get('password', '')}", check the consent/checkbox, click Submit/Create Account. Do NOT look for a verifyPassword field — if it's not on the page, skip it.
       - If you see **"Don't have an account yet? Create Account"** link -> you are on the sign-in page. Before giving up on sign-in, click the "Create Account" button/link to go to the registration form.
       - If you see **"Already have an account? Sign In"** link -> you are on the create-account page. Before filling, click "Sign In" to switch to the login form.
    5d. After clicking Login/Sign In/Create Account: wait for navigation, then mcp_playwright_snapshot. Check for CAPTCHAs.
-   5e. Sign in succeeded? Continue to step 6. Sign in failed or page didn't change? Try the other flow (Create Account if you tried Sign In, or vice versa).
-   5f. All failed? Output RESULT:FAILED:login_issue. Do not loop.
+   5e. **Email verification**: After creating an account, the site may send a verification email. If the page shows "Check your email", "Verify your email", "Confirmation sent", or similar:
+      1. Wait 10 seconds for the email to arrive
+      2. Run via terminal: python3 ~/.applypilot/email_verifier.py search "from:(the domain) subject:(verify OR confirm OR welcome OR activate)"
+      3. If results found, read the email: python3 ~/.applypilot/email_verifier.py extract-link <id>
+      4. Use mcp_playwright_browser_navigate to go to that confirmation link
+      5. Wait for the "email confirmed" / "account verified" page
+      6. Navigate back to the original job URL and sign in with the credentials you just created
+   5f. Sign in succeeded? Continue to step 6. Sign in failed or page didn't change? Try the other flow (Create Account if you tried Sign In, or vice versa).
+   5g. All failed? Output RESULT:FAILED:login_issue. Do not loop.
 6. Upload resume. Use mcp_playwright_set_input_files to set the resume file directly on the file input element.
    File path: {pdf_path}
    The file input selector is usually 'input[type=file]'. Find it first with mcp_playwright_snapshot, then use mcp_playwright_set_input_files with the ref or selector.
@@ -642,7 +662,7 @@ Use mcp_playwright_set_input_files to upload the resume. This is the built-in Pl
 {captcha_section}
 
 == TIME LIMIT ==
-You have until the process timeout (~10 min) to complete this application. Work efficiently, but don't rush — this model is free. There is NO iteration cap.
+You have until the process timeout (~15 min) to complete this application. Work efficiently, but don't rush — this model is free. There is NO iteration cap.
 - If the form upload isn't working, fields aren't responding, or you're stuck in a loop with no progress after many attempts, give up early — don't burn the whole timeout.
 - Log a brief status after each iteration (what you did, what you found). This helps diagnose where applications get stuck.
 

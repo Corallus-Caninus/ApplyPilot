@@ -406,7 +406,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             reader_thread.start()
 
             # Wait for the process to finish with a real timeout
-            proc.wait(timeout=300)  # 5 min timeout per job
+            proc.wait(timeout=900)  # 15 min — complex ATS forms need it
             reader_thread.join(timeout=5)
             text_parts = stdout_lines
 

@@ -20,6 +20,8 @@ blocked:
     - "indeed"
     - "linkedin"
     - "Thomson Reuters"
+    - "Comfrt"
+    - "Icims"
   url_patterns:
     - "%glassdoor%"
     - "%google.com/about/careers%"

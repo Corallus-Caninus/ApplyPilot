@@ -22,6 +22,8 @@ log = logging.getLogger(__name__)
 
 SCORE_PROMPT = """You are a job fit evaluator. Given a candidate's resume and a job description, score how well the candidate fits the role.
 
+CRITICAL: Do NOT output any thinking, reasoning, or analysis. Output ONLY the three lines below and nothing else.
+
 SCORING CRITERIA:
 - 9-10: Perfect match. Candidate has direct experience in nearly all required skills and qualifications.
 - 7-8: Strong match. Candidate has most required skills, minor gaps easily bridged.

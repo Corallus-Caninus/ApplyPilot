@@ -78,15 +78,33 @@ def _kill_on_port(port: int) -> None:
                     if pid.isdigit():
                         _kill_process_tree(int(pid))
         else:
-            # macOS / Linux
-            result = subprocess.run(
-                ["lsof", "-ti", f":{port}"],
-                capture_output=True, text=True, timeout=10,
-            )
-            for pid_str in result.stdout.strip().splitlines():
-                pid_str = pid_str.strip()
-                if pid_str.isdigit():
-                    _kill_process_tree(int(pid_str))
+            # macOS / Linux — try lsof, fall back to fuser or ss + awk
+            import shutil
+            if shutil.which("lsof"):
+                result = subprocess.run(
+                    ["lsof", "-ti", f":{port}"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                for pid_str in result.stdout.strip().splitlines():
+                    pid_str = pid_str.strip()
+                    if pid_str.isdigit():
+                        _kill_process_tree(int(pid_str))
+            elif shutil.which("fuser"):
+                subprocess.run(
+                    ["fuser", "-k", f"{port}/tcp"],
+                    capture_output=True, text=True, timeout=10,
+                )
+            elif shutil.which("ss"):
+                # Parse ss output to find PIDs on the port
+                result = subprocess.run(
+                    ["ss", "-tlnp"], capture_output=True, text=True, timeout=10,
+                )
+                for line in result.stdout.splitlines():
+                    if f":{port}" in line:
+                        import re
+                        match = re.search(r'pid=(\d+)', line)
+                        if match:
+                            _kill_process_tree(int(match.group(1)))
     except FileNotFoundError:
         logger.debug("Port-kill tool not found (netstat/lsof) for port %d", port)
     except Exception:
@@ -231,6 +249,9 @@ def launch_chrome(worker_id: int, port: int | None = None,
         "--use-fake-ui-for-media-stream",
         "--deny-permission-prompts",
         "--disable-notifications",
+        # Suppress "Leave site?" confirmation dialogs
+        "--disable-beforeunload",
+        "--disable-features=DocumentBeforeUnload",
     ]
     if headless:
         cmd.append("--headless=new")
