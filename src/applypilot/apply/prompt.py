@@ -599,6 +599,14 @@ If a browser tool call fails because of a dialog ("Leave site?", alert, confirm,
    5a. FIRST: check the URL. If you landed on {', '.join(blocked_sso)}, or any SSO/OAuth page -> STOP. Output RESULT:FAILED:sso_required. Do NOT try to sign in.
    5b. Check for popups/new windows. Use mcp_playwright_snapshot to see what appeared. If it's SSO -> RESULT:FAILED:sso_required.
    5c. **Workday / create-account flow**: Read the page with mcp_playwright_snapshot. Determine which form is showing:
+
+      **CREDENTIALS MANAGEMENT:**
+      Before attempting sign-in or create-account, run this terminal command to check if
+      credentials already exist for this site:
+        python3 ~/.applypilot/credentials_manager.py get {job.get('site', 'unknown')}
+      If credentials exist, use those credentials instead of the profile default.
+      If credentials exist and login fails, try password reset (see 5h below).
+
       - **Sign In form** (has "Sign In" heading, email + password fields, "Sign In" / "Submit" button) -> try signing in with email: {personal['email']} and password: {personal.get('password', '')}
       - **Create Account / Register form** (has "Create Account" heading, email + password fields, consent checkbox, "Create Account" / "Submit" button) -> fill in: email = {personal['email']}, password = "{personal.get('password', '')}", check the consent/checkbox, click Submit/Create Account. Do NOT look for a verifyPassword field — if it's not on the page, skip it.
       - If you see **"Don't have an account yet? Create Account"** link -> you are on the sign-in page. Before giving up on sign-in, click the "Create Account" button/link to go to the registration form.
@@ -611,8 +619,27 @@ If a browser tool call fails because of a dialog ("Leave site?", alert, confirm,
       4. Use mcp_playwright_browser_navigate to go to that confirmation link
       5. Wait for the "email confirmed" / "account verified" page
       6. Navigate back to the original job URL and sign in with the credentials you just created
-   5f. Sign in succeeded? Continue to step 6. Sign in failed or page didn't change? Try the other flow (Create Account if you tried Sign In, or vice versa).
-   5g. All failed? Output RESULT:FAILED:login_issue. Do not loop.
+   5f. **Save credentials after successful account creation**:
+      After successfully creating an account (email verified, signed in, or past the login wall),
+      run this terminal command to save the credentials for future use:
+        python3 ~/.applypilot/credentials_manager.py save {job.get('site', 'unknown')} {personal['email']} "{personal.get('password', '')}"
+      This ensures the next time the pipeline encounters this site, it can sign in directly
+      without creating another account.
+   5g. Sign in succeeded? Continue to step 6. Sign in failed or page didn't change? Try the other flow (Create Account if you tried Sign In, or vice versa).
+   5h. **Password recovery** (if all login/create-account attempts fail):
+      If sign-in and create-account both failed, try the password reset flow:
+      1. Look for a "Forgot password?" / "Reset password" / "Trouble signing in?" link -> click it
+      2. Enter the email: {personal['email']}
+      3. Wait 15 seconds for the reset email to arrive
+      4. Check email for reset links:
+         python3 ~/.applypilot/email_verifier.py search "subject:(reset OR password OR forgot)"
+      5. If a reset email is found, extract the link:
+         python3 ~/.applypilot/email_verifier.py extract-link <msg_id>
+      6. Navigate to that link and set a new password
+      7. After resetting, update the saved credentials:
+         python3 ~/.applypilot/credentials_manager.py update-password {job.get('site', 'unknown')} "<new_password>"
+      8. Navigate back to the job URL and sign in with the new password
+   5i. All failed? Output RESULT:FAILED:login_issue. Do not loop.
 6. Upload resume. Use mcp_playwright_set_input_files to set the resume file directly on the file input element.
    File path: {pdf_path}
    The file input selector is usually 'input[type=file]'. Find it first with mcp_playwright_snapshot, then use mcp_playwright_set_input_files with the ref or selector.
