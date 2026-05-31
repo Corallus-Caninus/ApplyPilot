@@ -105,7 +105,7 @@ while true; do
     --disable-features=ChromeWhatsNew,ChromeToaster,SearchEngineChoiceScreen,ChromeLabs \
     --hide-crash-restore-bubble \
     --remote-allow-origins="*" \
-    "https://www.google.com" &
+    "about:blank" &
   CHROME_PID=$!
   echo "[start-chrome] PID: $CHROME_PID"
 
