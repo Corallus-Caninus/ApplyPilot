@@ -511,6 +511,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 PERMANENT_FAILURES: set[str] = {
     "expired", "captcha", "login_issue",
     "not_eligible_location", "not_eligible_salary",
+    "not_eligible_role",
     "already_applied", "account_required",
     "not_a_job_application", "unsafe_permissions",
     "unsafe_verification", "sso_required",

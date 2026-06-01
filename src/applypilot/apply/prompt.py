@@ -588,6 +588,14 @@ If a browser tool call fails because of a dialog ("Leave site?", alert, confirm,
 - Page redirects to Google "sorry" CAPTCHA or any search-engine-block page → RESULT:FAILED:site_blocked.
 - A browser dialog/popup appears ("Leave site?", "Confirm", "Changes you made may not be saved") → use mcp_playwright_browser_handle_dialog with accept=false to dismiss it immediately. Never let dialogs block you.
 
+0. **ROLE CHECK** — Read the job title from the == JOB == section above. This candidate is a **Software Developer / Computer Engineer**. Apply only if the title (or job description) matches:
+   - ✅ **Software** roles: Software Engineer, Software Developer, Backend, Frontend, Full Stack, Fullstack, Application Engineer, Systems Software, Embedded Software, Firmware, DevOps, SRE, Platform Engineer, Infrastructure Engineer, Cloud Engineer, Automation Engineer, Data Engineer, Data Scientist, ML Engineer, AI Engineer, Research Engineer, Algorithms Engineer
+   - ✅ **Computer/Hardware Engineering** roles: Computer Engineer, Hardware Engineer, PCB Designer, FPGA Engineer, ASIC Engineer, VLSI Engineer, Systems Engineer, Electrical Engineer, Embedded Systems, Network Engineer, Security Engineer
+   - ✅ Any title containing "Engineer", "Developer", "Architect", "Scientist" (in a technical/software/compute context)
+   - ❌ **SKIP** (output RESULT:FAILED:not_eligible_role — this is NOT a software/hardware engineering role): Sales, Account Executive, Account Manager, Customer Success, Facilities, Coordinator, Specialist, Representative, VP, Vice President, Head of, Marketing, Recruiter, HR, Finance, Operations, Compliance, Legal, Privacy, Procurement, Supply Chain, Quality, Regulatory, Audit, Consultant, Officer, Director of (non-technical)
+   
+   If the role doesn't fit, output RESULT:FAILED:not_eligible_role immediately. Do NOT navigate to the page. Do NOT waste time filling forms for jobs outside this candidate's profession.
+
 1. Use mcp_playwright_navigate to go to the job URL.
 2. Use mcp_playwright_snapshot to read the page. Check for CAPTCHAs (see CAPTCHA section).
 3. LOCATION CHECK. Read the page for location info. If not eligible, output RESULT and stop.
@@ -657,6 +665,7 @@ RESULT:CAPTCHA -- blocked by unsolvable captcha
 RESULT:LOGIN_ISSUE -- could not sign in or create account
 RESULT:FAILED:not_eligible_location -- onsite outside acceptable area, no remote option
 RESULT:FAILED:not_eligible_work_auth -- requires unauthorized work location
+RESULT:FAILED:not_eligible_role -- this is NOT a software/hardware engineering role (Sales, Marketing, Finance, etc.)
 RESULT:FAILED:reason -- any other failure (brief reason)
 
 == BROWSER EFFICIENCY ==
