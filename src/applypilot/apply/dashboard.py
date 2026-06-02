@@ -214,14 +214,14 @@ def render_dashboard() -> Table:
             action,
         )
 
-    # Completed jobs history (numbered 1, 2, 3...)
-    for idx, cj in enumerate(reversed(completed), 1):
+    # Completed jobs history
+    for cj in reversed(completed):
         row_idx += 1
         style = _STATUS_STYLES.get(cj.status, "dim")
         status_text = Text(cj.status.upper(), style=style)
         job_text = f"{cj.title[:28]} @ {cj.company[:16]}" if cj.title else ""
         score_text = str(cj.score) if cj.score else ""
-        table.add_row(f"{idx}", job_text, score_text, status_text, cj.elapsed, "", "")
+        table.add_row("", job_text, score_text, status_text, cj.elapsed, "", "")
 
     # Totals
     total_applied = sum(s.jobs_applied for s in states)
