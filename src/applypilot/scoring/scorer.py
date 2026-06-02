@@ -59,16 +59,16 @@ def _parse_score_response(response: str) -> dict:
 
     for line in response.split("\n"):
         line = line.strip()
-        if line.startswith("SCORE:"):
+        if "SCORE:" in line.upper():
             try:
-                score = int(re.search(r"\d+", line).group())
+                score = int(re.search(r"\d+", line.split("SCORE:")[-1]).group())
                 score = max(1, min(10, score))
             except (AttributeError, ValueError):
                 score = 0
-        elif line.startswith("KEYWORDS:"):
-            keywords = line.replace("KEYWORDS:", "").strip()
-        elif line.startswith("REASONING:"):
-            reasoning = line.replace("REASONING:", "").strip()
+        elif "KEYWORDS:" in line.upper():
+            keywords = line.split("KEYWORDS:")[-1].strip() if "KEYWORDS:" in line else line.split("keywords:")[-1].strip()
+        elif "REASONING:" in line.upper():
+            reasoning = line.split("REASONING:")[-1].strip() if "REASONING:" in line else line.split("reasoning:")[-1].strip()
 
     return {"score": score, "keywords": keywords, "reasoning": reasoning}
 
@@ -97,7 +97,7 @@ def score_job(resume_text: str, job: dict) -> dict:
 
     try:
         client = get_client()
-        response = client.chat(messages, max_tokens=512, temperature=0.2)
+        response = client.chat(messages, max_tokens=2048, temperature=0.2)
         return _parse_score_response(response)
     except Exception as e:
         log.error("LLM error scoring job '%s': %s", job.get("title", "?"), e)
