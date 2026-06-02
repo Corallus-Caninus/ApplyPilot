@@ -342,37 +342,6 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     if not os.path.exists(hermes_path):
         return "failed:hermes_not_found", 0
 
-    # Create a minimal per-worker config overriding only the CDP port
-    import yaml
-    worker_hermes_home = config.APP_DIR / f"hermes-config-{worker_id}"
-    worker_hermes_home.mkdir(parents=True, exist_ok=True)
-    worker_config = worker_hermes_home / "config.yaml"
-    
-    if not worker_config.exists():
-        # Read the main config and patch only the Playwright MCP CDP endpoint
-        src_config = Path(os.path.expanduser("~/.hermes")) / "config.yaml"
-        if src_config.exists():
-            cfg = yaml.safe_load(src_config.read_text(encoding="utf-8"))
-            # Patch MCP server args to use the worker's port
-            mcp = cfg.get("mcp_servers", {})
-            pw = mcp.get("playwright", {})
-            if pw and "args" in pw:
-                pw["args"] = [a.replace(":9515", f":{port}").replace(f":{BASE_CDP_PORT}", f":{port}") for a in pw["args"]]
-            with open(worker_config, "w") as f:
-                yaml.dump(cfg, f)
-        else:
-            # No source config — write minimal config with just the CDP port
-            minimal = {
-                "mcp_servers": {
-                    "playwright": {
-                        "command": "npx",
-                        "args": ["-y", "@playwright/mcp@latest", f"--cdp-endpoint=http://localhost:{port}", "--viewport-size=1280x900"],
-                    }
-                }
-            }
-            with open(worker_config, "w") as f:
-                yaml.dump(minimal, f)
-
     cmd = [
         hermes_path,
         "chat",
@@ -384,7 +353,6 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     env = os.environ.copy()
     env.pop("CLAUDECODE", None)
     env.pop("CLAUDE_CODE_ENTRYPOINT", None)
-    env["HERMES_HOME"] = str(worker_hermes_home)
 
     worker_dir = reset_worker_dir(worker_id)
 
