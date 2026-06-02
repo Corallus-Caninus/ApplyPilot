@@ -155,6 +155,12 @@ def _derive_site_from_url(apply_url: str | None, company_from_jobspy: str | None
     7. Fall back to original board label
     """
     if not apply_url:
+        # No direct URL — try to use the company name from JobSpy
+        # instead of falling straight back to the board label.
+        if company_from_jobspy:
+            cleaned = _clean_company_name(company_from_jobspy)
+            if cleaned:
+                return cleaned
         return board_label
 
     parsed = urlparse(apply_url)
