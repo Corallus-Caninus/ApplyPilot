@@ -143,7 +143,27 @@ def render_dashboard() -> Table:
     Returns:
         A Rich Table object ready for display.
     """
-    table = Table(title="ApplyPilot Dashboard", expand=True, show_lines=False)
+    # Fetch progress stats
+    try:
+        from applypilot.config import load_blocked_sites
+        from applypilot.database import get_connection
+        conn = get_connection()
+        blocked_sites, _ = load_blocked_sites()
+        blocked = tuple(blocked_sites)
+        ph = ','.join('?' * len(blocked))
+        total_jobs = conn.execute(f"SELECT COUNT(*) FROM jobs WHERE site NOT IN ({ph})", list(blocked)).fetchone()[0]
+        resolved = conn.execute(f"SELECT COUNT(*) FROM jobs WHERE site NOT IN ({ph}) AND (apply_status = 'applied' OR (apply_status = 'failed' AND apply_attempts >= 99))", list(blocked)).fetchone()[0]
+        top = conn.execute(f"SELECT url, title, site, fit_score FROM jobs WHERE (apply_status IS NULL OR (apply_status = 'failed' AND apply_attempts < 99)) AND apply_status != 'in_progress' AND apply_status != 'applied' AND site NOT IN ({ph}) ORDER BY fit_score DESC NULLS LAST LIMIT 1", list(blocked)).fetchone()
+        if top:
+            params = [top[3] or 0, top[3] or 0, top[0]] + list(blocked)
+            ahead = conn.execute(f"SELECT COUNT(*) FROM jobs WHERE site NOT IN ({ph}) AND (apply_status = 'applied' OR (apply_status = 'failed' AND apply_attempts >= 99) OR fit_score > ? OR (fit_score = ? AND url < ?))", params).fetchone()[0]
+            subtitle = f"{resolved}/{total_jobs} done | Rank #{ahead+1} | {top[1][:40]} @ {top[2]} (score={top[3] or '-'})"
+        else:
+            subtitle = f"{resolved}/{total_jobs} done"
+    except Exception:
+        subtitle = ""
+
+    table = Table(title=f"ApplyPilot Dashboard  [{subtitle}]" if subtitle else "ApplyPilot Dashboard", expand=True, show_lines=False)
     table.add_column("#", style="bold", width=3, justify="center")
     table.add_column("Job", min_width=28, max_width=45, no_wrap=True)
     table.add_column("Score", width=5, justify="center")
