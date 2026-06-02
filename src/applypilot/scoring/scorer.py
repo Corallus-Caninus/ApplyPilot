@@ -119,16 +119,17 @@ def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
 
     if rescore:
         # Score jobs at real company ATS sites first, blocked sites last.
-        # This way the apply pipeline sees high scores for applyable jobs ASAP.
+        # Skip already-applied and in-progress jobs — no point scoring those.
         from applypilot.config import load_blocked_sites
         blocked_sites, _ = load_blocked_sites()
+        base_where = "full_description IS NOT NULL AND (apply_status IS NULL OR apply_status = 'failed')"
         if blocked_sites:
             placeholders = ",".join("?" * len(blocked_sites))
-            query = f"SELECT * FROM jobs WHERE full_description IS NOT NULL ORDER BY CASE WHEN site IN ({placeholders}) THEN 1 ELSE 0 END, ROWID"
+            query = f"SELECT * FROM jobs WHERE {base_where} ORDER BY CASE WHEN site IN ({placeholders}) THEN 1 ELSE 0 END, ROWID"
             params = list(blocked_sites)
             jobs = conn.execute(query, params).fetchall()
         else:
-            query = "SELECT * FROM jobs WHERE full_description IS NOT NULL ORDER BY ROWID"
+            query = f"SELECT * FROM jobs WHERE {base_where} ORDER BY ROWID"
             jobs = conn.execute(query).fetchall()
     else:
         jobs = get_jobs_by_stage(conn=conn, stage="pending_score", limit=limit)
