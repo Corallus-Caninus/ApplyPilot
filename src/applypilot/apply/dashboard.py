@@ -153,24 +153,24 @@ def render_dashboard() -> Table:
         ph = ','.join('?' * len(blocked))
         total_jobs = conn.execute(f"SELECT COUNT(*) FROM jobs WHERE site NOT IN ({ph})", list(blocked)).fetchone()[0]
         resolved = conn.execute(f"SELECT COUNT(*) FROM jobs WHERE site NOT IN ({ph}) AND (apply_status = 'applied' OR (apply_status = 'failed' AND apply_attempts >= 99))", list(blocked)).fetchone()[0]
-        top = conn.execute(f"SELECT url, title, site, fit_score FROM jobs WHERE (apply_status IS NULL OR (apply_status = 'failed' AND apply_attempts < 99)) AND apply_status != 'in_progress' AND apply_status != 'applied' AND site NOT IN ({ph}) ORDER BY fit_score DESC NULLS LAST LIMIT 1", list(blocked)).fetchone()
-        if top:
-            params = [top[3] or 0, top[3] or 0, top[0]] + list(blocked)
-            ahead = conn.execute(f"SELECT COUNT(*) FROM jobs WHERE site NOT IN ({ph}) AND (apply_status = 'applied' OR (apply_status = 'failed' AND apply_attempts >= 99) OR fit_score > ? OR (fit_score = ? AND url < ?))", params).fetchone()[0]
-            subtitle = f"{resolved}/{total_jobs} done | {top[1][:40]} @ {top[2]} (score={top[3] or '-'})"
+        # Show the current in-progress job, not the next queued one
+        current = conn.execute(f"SELECT title, site, fit_score FROM jobs WHERE apply_status = 'in_progress' AND site NOT IN ({ph}) ORDER BY ROWID LIMIT 1", list(blocked)).fetchone()
+        if current:
+            subtitle = f"{resolved}/{total_jobs} done | {current[0][:40]} @ {current[1]} (score={current[2] or '-'})"
         else:
             subtitle = f"{resolved}/{total_jobs} done"
     except Exception:
         subtitle = ""
 
-    table = Table(title=f"ApplyPilot Dashboard  [{subtitle}]" if subtitle else "ApplyPilot Dashboard", expand=True, show_lines=False)
+    table = Table(title=f"ApplyPilot Dashboard  [{subtitle}]" if subtitle else "ApplyPilot Dashboard",
+                  expand=True, show_lines=False)
     table.add_column("#", style="bold", width=3, justify="center")
-    table.add_column("Job", min_width=28, max_width=45, no_wrap=True)
-    table.add_column("Score", width=5, justify="center")
-    table.add_column("Status", width=12, justify="center")
+    table.add_column("Job", min_width=22, max_width=35, no_wrap=True)
+    table.add_column("S", width=3, justify="center")
+    table.add_column("Status", width=10, justify="center")
     table.add_column("Time", width=6, justify="right")
-    table.add_column("Acts", width=4, justify="right")
-    table.add_column("Last Action", min_width=18, max_width=30, no_wrap=True)
+    table.add_column("Acts", width=3, justify="right")
+    table.add_column("Last Action", min_width=14, max_width=25, no_wrap=True)
 
     with _lock:
         states = sorted(_worker_states.values(), key=lambda s: s.worker_id)
