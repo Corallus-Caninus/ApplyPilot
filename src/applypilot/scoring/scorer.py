@@ -138,7 +138,6 @@ def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
     t0 = time.time()
     completed = 0
     errors = 0
-    results: list[dict] = []
 
     for job in jobs:
         result = score_job(resume_text, job)
@@ -148,24 +147,21 @@ def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
         if result["score"] == 0:
             errors += 1
 
-        results.append(result)
+        # Write each score immediately so the apply pipeline can use it
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "UPDATE jobs SET fit_score = ?, score_reasoning = ?, scored_at = ? WHERE url = ?",
+            (result["score"], f"{result.get('keywords', '')}\n{result.get('reasoning', '')}", now, result["url"]),
+        )
+        conn.commit()
 
         log.info(
             "[%d/%d] score=%d  %s",
             completed, len(jobs), result["score"], job.get("title", "?")[:60],
         )
 
-    # Write scores to DB
-    now = datetime.now(timezone.utc).isoformat()
-    for r in results:
-        conn.execute(
-            "UPDATE jobs SET fit_score = ?, score_reasoning = ?, scored_at = ? WHERE url = ?",
-            (r["score"], f"{r['keywords']}\n{r['reasoning']}", now, r["url"]),
-        )
-    conn.commit()
-
     elapsed = time.time() - t0
-    log.info("Done: %d scored in %.1fs (%.1f jobs/sec)", len(results), elapsed, len(results) / elapsed if elapsed > 0 else 0)
+    log.info("Done: %d scored in %.1fs (%.1f jobs/sec)", completed, elapsed, completed / elapsed if elapsed > 0 else 0)
 
     # Score distribution
     dist = conn.execute("""
