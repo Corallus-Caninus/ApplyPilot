@@ -32,7 +32,7 @@ SCORING CRITERIA:
 - 1-2: Poor match. Completely different field or experience level.
 
 IMPORTANT FACTORS:
-- **+1 to +2 score bonus** for AI/ML roles — jobs involving AI, Machine Learning, LLMs, deep learning, neural networks, natural language processing, computer vision, or agentic systems. The candidate's resume shows direct AI/ML engineering experience. This bonus applies on top of the base score.
+- **+2 to +4 score bonus** for AI/ML roles — jobs involving AI, Machine Learning, LLMs, deep learning, neural networks, natural language processing, computer vision, or agentic systems. The candidate's resume shows direct AI/ML engineering experience. This bonus applies on top of the base score.
 - Weight technical skills heavily (programming languages, frameworks, tools)
 - Consider transferable experience (automation, scripting, API work)
 - Factor in the candidate's project experience
