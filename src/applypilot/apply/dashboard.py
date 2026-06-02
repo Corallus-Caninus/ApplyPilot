@@ -38,11 +38,23 @@ class WorkerState:
     log_file: Path | None = None
 
 
+@dataclass
+class CompletedJob:
+    """Record of a finished job for the history log."""
+    title: str = ""
+    company: str = ""
+    score: int | None = None
+    status: str = ""
+    elapsed: str = ""
+
+
 # Module-level state (thread-safe via _lock)
 _worker_states: dict[int, WorkerState] = {}
+_completed_jobs: list[CompletedJob] = []
 _events: list[str] = []
 _lock = threading.Lock()
 MAX_EVENTS = 8
+MAX_HISTORY = 15
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +100,25 @@ def add_event(msg: str) -> None:
             _events.pop(0)
 
 
+def add_completed_job(title: str, company: str, score: int | None, status: str, elapsed: str) -> None:
+    """Record a finished job in the history log.
+
+    Args:
+        title: Job title.
+        company: Company/site name.
+        score: Fit score (may be None).
+        status: Result status string.
+        elapsed: Human-readable elapsed time.
+    """
+    with _lock:
+        _completed_jobs.append(CompletedJob(
+            title=title[:40], company=company[:16],
+            score=score, status=status, elapsed=elapsed,
+        ))
+        if len(_completed_jobs) > MAX_HISTORY:
+            _completed_jobs.pop(0)
+
+
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
@@ -107,61 +138,62 @@ _STATUS_STYLES: dict[str, str] = {
 
 
 def render_dashboard() -> Table:
-    """Build the Rich table showing all worker statuses.
+    """Build the Rich table showing worker status and completed jobs.
 
     Returns:
         A Rich Table object ready for display.
     """
     table = Table(title="ApplyPilot Dashboard", expand=True, show_lines=False)
-    table.add_column("W", style="bold", width=3, justify="center")
-    table.add_column("Job", min_width=30, max_width=50, no_wrap=True)
+    table.add_column("#", style="bold", width=3, justify="center")
+    table.add_column("Job", min_width=28, max_width=45, no_wrap=True)
+    table.add_column("Score", width=5, justify="center")
     table.add_column("Status", width=12, justify="center")
     table.add_column("Time", width=6, justify="right")
-    table.add_column("Acts", width=5, justify="right")
-    table.add_column("Last Action", min_width=20, max_width=35, no_wrap=True)
-    table.add_column("OK", width=4, justify="right", style="green")
-    table.add_column("Fail", width=4, justify="right", style="red")
-    table.add_column("Cost", width=8, justify="right")
+    table.add_column("Acts", width=4, justify="right")
+    table.add_column("Last Action", min_width=18, max_width=30, no_wrap=True)
 
     with _lock:
         states = sorted(_worker_states.values(), key=lambda s: s.worker_id)
+        completed = list(_completed_jobs)
 
-    total_applied = 0
-    total_failed = 0
-    total_cost = 0.0
+    row_idx = 0
 
+    # Current worker state
     for s in states:
+        row_idx += 1
         elapsed = ""
         if s.start_time and s.status == "applying":
             elapsed = f"{int(time.time() - s.start_time)}s"
 
         style = _STATUS_STYLES.get(s.status, "")
         status_text = Text(s.status.upper(), style=style)
-
         job_text = f"{s.job_title[:28]} @ {s.company[:16]}" if s.job_title else ""
+        score_text = str(s.score) if s.score else ""
 
         table.add_row(
-            str(s.worker_id),
+            str(s.worker_id) if s.status in ("applying", "starting") else "",
             job_text,
+            score_text,
             status_text,
             elapsed,
             str(s.actions) if s.actions else "",
-            s.last_action[:35] if s.last_action else "",
-            str(s.jobs_applied),
-            str(s.jobs_failed),
-            f"${s.total_cost:.3f}" if s.total_cost else "",
+            s.last_action[:30] if s.last_action else "",
         )
-        total_applied += s.jobs_applied
-        total_failed += s.jobs_failed
-        total_cost += s.total_cost
 
-    # Totals row
+    # Completed jobs history
+    for cj in reversed(completed):
+        row_idx += 1
+        style = _STATUS_STYLES.get(cj.status, "dim")
+        status_text = Text(cj.status.upper(), style=style)
+        job_text = f"{cj.title[:28]} @ {cj.company[:16]}" if cj.title else ""
+        score_text = str(cj.score) if cj.score else ""
+        table.add_row("", job_text, score_text, status_text, cj.elapsed, "", "")
+
+    # Totals
+    total_applied = sum(s.jobs_applied for s in states)
+    total_failed = sum(s.jobs_failed for s in states)
     table.add_section()
-    table.add_row(
-        "", "", "", "", "", "TOTAL",
-        str(total_applied), str(total_failed), f"${total_cost:.3f}",
-        style="bold",
-    )
+    table.add_row("", "", "", "", "", "", f"OK={total_applied} FAIL={total_failed}", style="bold")
 
     return table
 

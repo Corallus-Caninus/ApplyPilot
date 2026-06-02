@@ -34,7 +34,7 @@ from applypilot.apply.chrome import (
 )
 from applypilot.apply.dashboard import (
     init_worker, update_state, add_event, get_state,
-    render_full, get_totals,
+    add_completed_job, render_full, get_totals,
 )
 
 logger = logging.getLogger(__name__)
@@ -603,6 +603,11 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                 applied += 1
                 update_state(worker_id, jobs_applied=applied,
                              jobs_done=applied + failed)
+                add_completed_job(
+                    job['title'], job.get('site', ''),
+                    job.get('fit_score'), 'applied',
+                    f"{duration_ms // 60000}m{duration_ms // 1000 % 60}s" if duration_ms else "",
+                )
             else:
                 reason = result.split(":", 1)[-1] if ":" in result else result
                 mark_result(job["url"], "failed", reason,
@@ -611,6 +616,11 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                 failed += 1
                 update_state(worker_id, jobs_failed=failed,
                              jobs_done=applied + failed)
+                add_completed_job(
+                    job['title'], job.get('site', ''),
+                    job.get('fit_score'), reason,
+                    f"{duration_ms // 60000}m{duration_ms // 1000 % 60}s" if duration_ms else "",
+                )
 
         except KeyboardInterrupt:
             release_lock(job["url"])
