@@ -341,17 +341,38 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     hermes_path = os.path.expanduser("~/Code/hermes/fully_automatic_holographic")
     if not os.path.exists(hermes_path):
         return "failed:hermes_not_found", 0
+
+    # Create a per-worker Hermes config with the correct CDP port
+    import shutil
+    worker_hermes_home = config.APP_DIR / f"hermes-config-{worker_id}"
+    worker_hermes_home.mkdir(parents=True, exist_ok=True)
+    
+    # Copy and patch the main config, or create a minimal one
+    src_config = Path(os.path.expanduser("~/.hermes")) / "config.yaml"
+    worker_config = worker_hermes_home / "config.yaml"
+    if src_config.exists() and not worker_config.exists():
+        config_text = src_config.read_text(encoding="utf-8")
+        # Patch CDP endpoint: replace localhost:9515 with worker's port
+        import re
+        config_text = re.sub(
+            r'localhost:\d+',
+            f'localhost:{port}',
+            config_text
+        )
+        worker_config.write_text(config_text, encoding="utf-8")
+
     cmd = [
         hermes_path,
         "chat",
-        "-v",          # verbose
-        "-q",          # query
+        "-v",
+        "-q",
         agent_prompt,
     ]
 
     env = os.environ.copy()
     env.pop("CLAUDECODE", None)
     env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+    env["HERMES_HOME"] = str(worker_hermes_home)
 
     worker_dir = reset_worker_dir(worker_id)
 
