@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Start Chrome on a specific port for the apply pipeline.
+# Start Chrome on a specific port with an isolated profile for the apply pipeline.
 # Usage: start-chrome.sh [port]
 # Default port: 9515
 
 PORT="${1:-9515}"
+DATA_DIR="/tmp/chrome-worker-${PORT}"
 
 if [ -n "$CHROME_PATH" ]; then
   CHROME_BIN="$CHROME_PATH"
@@ -18,11 +19,16 @@ else
   exit 1
 fi
 
-echo "Starting Chrome on port $PORT via $CHROME_BIN..."
+mkdir -p "$DATA_DIR"
+
+echo "Starting Chrome on port $PORT (profile: $DATA_DIR)..."
 
 while true; do
   "$CHROME_BIN" \
     --remote-debugging-port="$PORT" \
+    --user-data-dir="$DATA_DIR" \
+    --no-first-run \
+    --no-default-browser-check \
     --no-sandbox \
     --disable-dev-shm-usage \
     --disable-beforeunload \
