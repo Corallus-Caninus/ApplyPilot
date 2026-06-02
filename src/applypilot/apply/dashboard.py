@@ -189,6 +189,11 @@ def render_dashboard() -> Table:
         status_text = Text(s.status.upper(), style=style)
         job_text = f"{s.job_title[:28]} @ {s.company[:16]}" if s.job_title else ""
         score_text = str(s.score) if s.score else ""
+        # Show elapsed time as last action when job is running
+        action = s.last_action[:30] if s.last_action else ""
+        if s.status in ("applying", "starting") and s.start_time and (not action or action == "starting"):
+            running = int(time.time() - s.start_time)
+            action = f"running {running}s"
 
         table.add_row(
             str(s.worker_id) if s.status in ("applying", "starting") else "",
@@ -197,7 +202,7 @@ def render_dashboard() -> Table:
             status_text,
             elapsed,
             str(s.actions) if s.actions else "",
-            s.last_action[:30] if s.last_action else "",
+            action,
         )
 
     # Completed jobs history

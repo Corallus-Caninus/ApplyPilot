@@ -591,7 +591,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
             # Use user's already-running Chrome on port 9515 instead of launching a new instance
             add_event(f"[W{worker_id}] Connecting to Chrome on port 9515...")
 
-            result, duration_ms = run_job(job, port=9515, worker_id=worker_id,
+            result, duration_ms = run_job(job, port=port, worker_id=worker_id,
                                             model=model, dry_run=dry_run)
 
             if result == "skipped":
