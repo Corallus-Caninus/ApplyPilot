@@ -569,7 +569,7 @@ If a browser tool call fails because of a dialog ("Leave site?", alert, confirm,
 2. If that doesn't work — kill and restart Chrome via terminal:
    Run: pkill -f "remote-debugging-port=9515"
    Wait 2 seconds
-   Then run: bash /home/jward/Code/applypilot/start-chrome.sh
+   Then run: bash start-chrome.sh
    Wait 5 seconds
 3. Retry your navigation. The fresh Chrome has no dialogs.
 
