@@ -10,18 +10,10 @@ manual_ats:
   - "ibegin.tcsapps.com"       # TCS iBegin — unsolvable CAPTCHA every time
 
 # ── Blocked sites — too problematic for automation ───────────────────────
+# NOTE: Most are now handled by site derivation + company URL map.
+# Jobs from these sites get rerouted to company ATS pages automatically.
 blocked:
-  sites:
-    - "glassdoor"
-    - "google"
-    - "accenture"
-    - "AccentureCareers"
-    - "Workopolis"
-    - "indeed"
-    - "linkedin"
-    - "Thomson Reuters"
-    - "Comfrt"
-    - "Icims"
+  sites: []
   url_patterns:
     - "%glassdoor%"
     - "%google.com/about/careers%"
