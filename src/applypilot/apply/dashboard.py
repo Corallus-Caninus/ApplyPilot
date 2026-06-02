@@ -189,14 +189,23 @@ def render_dashboard() -> Table:
         status_text = Text(s.status.upper(), style=style)
         job_text = f"{s.job_title[:28]} @ {s.company[:16]}" if s.job_title else ""
         score_text = str(s.score) if s.score else ""
-        # Show elapsed time as last action when job is running
+
+        # Try to read the latest action from the worker log
         action = s.last_action[:30] if s.last_action else ""
-        if s.status in ("applying", "starting") and s.start_time and (not action or action == "starting"):
-            running = int(time.time() - s.start_time)
-            action = f"running {running}s"
+        if s.status in ("applying", "starting") and s.log_file and s.log_file.exists():
+            try:
+                lines = s.log_file.read_text(encoding="utf-8", errors="replace").strip().split("\n")
+                # Find the most recent interesting line (tool call, action, etc.)
+                for line in reversed(lines):
+                    line = line.strip()
+                    if any(kw in line.lower() for kw in ["tool call", "click", "fill", "submit", "navigate", "type", "select", "upload", "scroll", "wait", "choose", "check", "apply", "next", "continue"]):
+                        action = line.strip()[:35]
+                        break
+            except Exception:
+                pass
 
         table.add_row(
-            str(s.worker_id) if s.status in ("applying", "starting") else "",
+            str(s.worker_id) if s.status in ("applying", "starting", "idle") else "",
             job_text,
             score_text,
             status_text,
@@ -205,14 +214,14 @@ def render_dashboard() -> Table:
             action,
         )
 
-    # Completed jobs history
-    for cj in reversed(completed):
+    # Completed jobs history (numbered 1, 2, 3...)
+    for idx, cj in enumerate(reversed(completed), 1):
         row_idx += 1
         style = _STATUS_STYLES.get(cj.status, "dim")
         status_text = Text(cj.status.upper(), style=style)
         job_text = f"{cj.title[:28]} @ {cj.company[:16]}" if cj.title else ""
         score_text = str(cj.score) if cj.score else ""
-        table.add_row("", job_text, score_text, status_text, cj.elapsed, "", "")
+        table.add_row(f"{idx}", job_text, score_text, status_text, cj.elapsed, "", "")
 
     # Totals
     total_applied = sum(s.jobs_applied for s in states)
