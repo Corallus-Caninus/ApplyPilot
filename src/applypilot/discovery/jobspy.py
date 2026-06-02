@@ -137,6 +137,146 @@ _SUBDOMAIN_ATS = {
     "comeet.com",
 }
 
+# Known company → career portal URL mapping.
+# When JobSpy finds a job but provides no direct apply URL, we look up
+# the company here to get a working career page URL to apply on.
+_KNOWN_COMPANY_URLS: dict[str, str] = {
+    # Big Tech
+    "microsoft": "https://careers.microsoft.com/us/en/search-results",
+    "google": "https://www.google.com/about/careers/applications/jobs/results",
+    "amazon": "https://www.amazon.jobs/en/search",
+    "aws": "https://www.amazon.jobs/en/search",
+    "meta": "https://www.metacareers.com/jobs",
+    "facebook": "https://www.metacareers.com/jobs",
+    # Major tech
+    "apple": "https://jobs.apple.com/en-us/search",
+    "netflix": "https://netflix.wd1.myworkdayjobs.com/Netflix",
+    "uber": "https://uber.wd5.myworkdayjobs.com/uberCareers",
+    "airbnb": "https://careers.airbnb.com/positions",
+    "twitter": "https://about.twitter.com/en/careers",
+    "x": "https://about.twitter.com/en/careers",
+    "salesforce": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site",
+    "nvidia": "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite",
+    "cisco": "https://cisco.wd5.myworkdayjobs.com/Cisco_Careers",
+    "intel": "https://intel.wd1.myworkdayjobs.com/External",
+    "adobe": "https://adobe.wd5.myworkdayjobs.com/external_experienced",
+    "ibm": "https://www.ibm.com/careers/us-en/search",
+    "oracle": "https://oracle.wd1.myworkdayjobs.com/oraclecareers",
+    "dell": "https://dell.wd1.myworkdayjobs.com/External",
+    "hp": "https://hp.wd5.myworkdayjobs.com/HPCareers",
+    "hpe": "https://hpe.wd5.myworkdayjobs.com/hpecareers",
+    "sap": "https://sap.wd1.myworkdayjobs.com/sapcareers",
+    "servicenow": "https://servicenow.wd1.myworkdayjobs.com/ServiceNowCareers",
+    "workday": "https://workday.wd5.myworkdayjobs.com/Workday",
+    "twilio": "https://twilio.wd1.myworkdayjobs.com/Twilio",
+    "databricks": "https://databricks.wd1.myworkdayjobs.com/DBX_Careers",
+    "reddit": "https://reddit.wd1.myworkdayjobs.com/reddit",
+    "spotify": "https://spotify.wd1.myworkdayjobs.com/Spotify",
+    "slack": "https://slack.wd1.myworkdayjobs.com/Slack",
+    "github": "https://github.wd1.myworkdayjobs.com/GitHub",
+    "gitlab": "https://gitlab.wd1.myworkdayjobs.com/gitlab",
+    "zoom": "https://zoom.wd5.myworkdayjobs.com/Zoom",
+    "pagerduty": "https://pagerduty.wd1.myworkdayjobs.com/PagerDuty",
+    "stripe": "https://stripe.wd1.myworkdayjobs.com/Stripe",
+    "square": "https://square.wd1.myworkdayjobs.com/squarercareers",
+    "block": "https://block.wd1.myworkdayjobs.com/Block",
+    "palantir": "https://palantir.wd1.myworkdayjobs.com/Palantir",
+    "snowflake": "https://snowflake.wd1.myworkdayjobs.com/Snowflake",
+    "confluent": "https://confluent.wd1.myworkdayjobs.com/Confluent",
+    "mongodb": "https://mongodb.wd1.myworkdayjobs.com/MongoDB",
+    "elastic": "https://elastic.wd1.myworkdayjobs.com/elastic",
+    "hashicorp": "https://hashicorp.wd1.myworkdayjobs.com/HashiCorp",
+    "cloudflare": "https://cloudflare.wd1.myworkdayjobs.com/Cloudflare",
+    "datadog": "https://datadog.wd1.myworkdayjobs.com/Datadog",
+    "splunk": "https://splunk.wd1.myworkdayjobs.com/Splunk",
+    "paloa": "https://paloa.wd1.myworkdayjobs.com/PaloAltoCareers",
+    "crowdstrike": "https://crowdstrike.wd1.myworkdayjobs.com/CrowdStrike",
+    "okta": "https://okta.wd1.myworkdayjobs.com/Okta",
+    "unity": "https://unity.wd1.myworkdayjobs.com/Unity",
+    "roblox": "https://roblox.wd1.myworkdayjobs.com/Roblox",
+    "snap": "https://snap.wd1.myworkdayjobs.com/Snap",
+    "pinterest": "https://pinterest.wd1.myworkdayjobs.com/Pinterest",
+    "etsy": "https://etsy.wd1.myworkdayjobs.com/Etsy",
+    "doordash": "https://doordash.wd1.myworkdayjobs.com/Doordash",
+    "lyft": "https://lyft.wd1.myworkdayjobs.com/lyft",
+    "coinbase": "https://coinbase.wd1.myworkdayjobs.com/Coinbase",
+    "robinhood": "https://robinhood.wd1.myworkdayjobs.com/Robinhood",
+    "instacart": "https://instacart.wd1.myworkdayjobs.com/Instacart",
+    # Hardware / Semiconductor
+    "amd": "https://amd.wd1.myworkdayjobs.com/AMD",
+    "qualcomm": "https://qualcomm.wd1.myworkdayjobs.com/Qualcomm",
+    "micron": "https://micron.wd1.myworkdayjobs.com/Micron",
+    "broadcom": "https://broadcom.wd1.myworkdayjobs.com/Broadcom",
+    "texas instruments": "https://ti.wd1.myworkdayjobs.com/TI_Careers",
+    "applied materials": "https://amat.wd1.myworkdayjobs.com/AppliedMaterials",
+    "asml": "https://asml.wd1.myworkdayjobs.com/ASML",
+    # Cloud / Infrastructure
+    "rackspace": "https://rackspace.wd1.myworkdayjobs.com/RackspaceCareers",
+    "digitalocean": "https://digitalocean.wd1.myworkdayjobs.com/DigitalOcean",
+    "fastly": "https://fastly.wd1.myworkdayjobs.com/Fastly",
+    "cloudflare": "https://cloudflare.wd1.myworkdayjobs.com/Cloudflare",
+    "akamai": "https://akamai.wd1.myworkdayjobs.com/Akamai",
+    "netapp": "https://netapp.wd1.myworkdayjobs.com/NetApp",
+    "pure storage": "https://purestorage.wd1.myworkdayjobs.com/PureStorage",
+    # Financial / Fintech
+    "mastercard": "https://mastercard.wd1.myworkdayjobs.com/CorporateCareers",
+    "visa": "https://visa.wd1.myworkdayjobs.com/Visa",
+    "paypal": "https://paypal.wd1.myworkdayjobs.com/jobs",
+    "stripe": "https://stripe.wd1.myworkdayjobs.com/Stripe",
+    "square": "https://square.wd1.myworkdayjobs.com/squarercareers",
+    "chime": "https://chime.wd1.myworkdayjobs.com/Chime",
+    "sofi": "https://sofi.wd1.myworkdayjobs.com/SoFi",
+    "affirm": "https://affirm.wd1.myworkdayjobs.com/Affirm",
+    "plaid": "https://plaid.wd1.myworkdayjobs.com/Plaid",
+    "robinhood": "https://robinhood.wd1.myworkdayjobs.com/Robinhood",
+    "upstart": "https://upstart.wd1.myworkdayjobs.com/Upstart",
+    "betterment": "https://betterment.wd1.myworkdayjobs.com/Betterment",
+    # Consulting
+    "pwc": "https://pwc.wd3.myworkdayjobs.com/Global_Experienced_Careers",
+    "deloitte": "https://deloitte.wd1.myworkdayjobs.com/Deloitte",
+    "accenture": "https://accenture.wd1.myworkdayjobs.com/Accenture",
+    "mckinsey": "https://mckinsey.wd1.myworkdayjobs.com/McKinsey",
+    "bain": "https://bain.wd1.myworkdayjobs.com/Bain",
+    "boston consulting": "https://bcg.wd1.myworkdayjobs.com/BCG",
+    # Automotive / Transport
+    "tesla": "https://tesla.wd5.myworkdayjobs.com/Tesla",
+    "rivian": "https://rivian.wd1.myworkdayjobs.com/Rivian",
+    "lucid": "https://lucidmotors.wd1.myworkdayjobs.com/LucidMotors",
+    "waymo": "https://waymo.wd1.myworkdayjobs.com/Waymo",
+    "cruise": "https://cruise.wd1.myworkdayjobs.com/Cruise",
+    # Pharma / Biotech
+    "moderna": "https://modernatx.wd1.myworkdayjobs.com/M_tx",
+    "pfizer": "https://pfizer.wd1.myworkdayjobs.com/Pfizer",
+    "johnson & johnson": "https://jnj.wd1.myworkdayjobs.com/JNJ",
+    "gsk": "https://gsk.wd1.myworkdayjobs.com/GSK",
+    "merck": "https://merck.wd1.myworkdayjobs.com/Merck",
+    "abbvie": "https://abbvie.wd1.myworkdayjobs.com/AbbVie",
+    "amgen": "https://amgen.wd1.myworkdayjobs.com/Amgen",
+    "gilead": "https://gilead.wd1.myworkdayjobs.com/Gilead",
+    "bristol": "https://bms.wd1.myworkdayjobs.com/BMS",
+    "regeneron": "https://regeneron.wd1.myworkdayjobs.com/Regeneron",
+    "illumina": "https://illumina.wd1.myworkdayjobs.com/Illumina",
+    # Telecom
+    "verizon": "https://verizon.wd1.myworkdayjobs.com/Verizon",
+    "att": "https://att.wd1.myworkdayjobs.com/ATT",
+    "tmobile": "https://tmobile.wd1.myworkdayjobs.com/TMobile",
+    "comcast": "https://comcast.wd1.myworkdayjobs.com/Comcast",
+    # Retail / E-commerce
+    "walmart": "https://walmart.wd1.myworkdayjobs.com/Walmart",
+    "target": "https://target.wd1.myworkdayjobs.com/Target",
+    "costco": "https://costco.wd1.myworkdayjobs.com/Costco",
+    "home depot": "https://homedepot.wd1.myworkdayjobs.com/HomeDepot",
+    "lowes": "https://lowes.wd1.myworkdayjobs.com/Lowes",
+    "best buy": "https://bestbuy.wd1.myworkdayjobs.com/BestBuy",
+    "shopify": "https://shopify.wd1.myworkdayjobs.com/Shopify",
+    # Defense / Aerospace
+    "lockheed": "https://lockheed.wd1.myworkdayjobs.com/LockheedMartin",
+    "raytheon": "https://raytheon.wd1.myworkdayjobs.com/Raytheon",
+    "northrop": "https://northrop.wd1.myworkdayjobs.com/NorthropGrumman",
+    "boeing": "https://boeing.wd1.myworkdayjobs.com/Boeing",
+    "spacex": "https://spacex.wd1.myworkdayjobs.com/SpaceX",
+}
+
 
 def _derive_site_from_url(apply_url: str | None, company_from_jobspy: str | None,
                            board_label: str) -> str:
@@ -313,6 +453,13 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tup
 
         # Extract apply URL if JobSpy provided it
         apply_url = str(row.get("job_url_direct", "")) if str(row.get("job_url_direct", "")) != "nan" else None
+
+        # If JobSpy didn't give us a direct URL, check if we know this company's
+        # career portal. This rescues jobs that would otherwise be dead ends.
+        if not apply_url and company:
+            known_url = _KNOWN_COMPANY_URLS.get(company.lower())
+            if known_url:
+                apply_url = known_url
 
         # Derive site from the direct URL instead of the source board
         # This way we apply on the company's own ATS, not on Indeed/LinkedIn
