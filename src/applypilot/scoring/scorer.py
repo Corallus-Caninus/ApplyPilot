@@ -118,10 +118,18 @@ def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
     conn = get_connection()
 
     if rescore:
-        query = "SELECT * FROM jobs WHERE full_description IS NOT NULL"
-        if limit > 0:
-            query += f" LIMIT {limit}"
-        jobs = conn.execute(query).fetchall()
+        # Score jobs at real company ATS sites first, blocked sites last.
+        # This way the apply pipeline sees high scores for applyable jobs ASAP.
+        from applypilot.config import load_blocked_sites
+        blocked_sites, _ = load_blocked_sites()
+        if blocked_sites:
+            placeholders = ",".join("?" * len(blocked_sites))
+            query = f"SELECT * FROM jobs WHERE full_description IS NOT NULL ORDER BY CASE WHEN site IN ({placeholders}) THEN 1 ELSE 0 END, ROWID"
+            params = list(blocked_sites)
+            jobs = conn.execute(query, params).fetchall()
+        else:
+            query = "SELECT * FROM jobs WHERE full_description IS NOT NULL ORDER BY ROWID"
+            jobs = conn.execute(query).fetchall()
     else:
         jobs = get_jobs_by_stage(conn=conn, stage="pending_score", limit=limit)
 
