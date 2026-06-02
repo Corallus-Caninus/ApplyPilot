@@ -157,7 +157,7 @@ def render_dashboard() -> Table:
         if top:
             params = [top[3] or 0, top[3] or 0, top[0]] + list(blocked)
             ahead = conn.execute(f"SELECT COUNT(*) FROM jobs WHERE site NOT IN ({ph}) AND (apply_status = 'applied' OR (apply_status = 'failed' AND apply_attempts >= 99) OR fit_score > ? OR (fit_score = ? AND url < ?))", params).fetchone()[0]
-            subtitle = f"{resolved}/{total_jobs} done | Rank #{ahead+1} | {top[1][:40]} @ {top[2]} (score={top[3] or '-'})"
+            subtitle = f"{resolved}/{total_jobs} done | {top[1][:40]} @ {top[2]} (score={top[3] or '-'})"
         else:
             subtitle = f"{resolved}/{total_jobs} done"
     except Exception:
