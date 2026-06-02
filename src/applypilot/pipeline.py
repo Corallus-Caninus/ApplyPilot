@@ -32,10 +32,13 @@ console = Console()
 # Stage definitions
 # ---------------------------------------------------------------------------
 
-STAGE_ORDER = ("discover", "enrich", "score", "tailor", "cover", "pdf")
+STAGE_ORDER = ("discover", "jobspy", "workday", "bigtech", "enrich", "score", "tailor", "cover", "pdf")
 
 STAGE_META: dict[str, dict] = {
-    "discover": {"desc": "Job discovery (JobSpy + Workday + smart extract)"},
+    "discover": {"desc": "Job discovery (all sources: JobSpy + Workday + Big Tech)"},
+    "jobspy":   {"desc": "JobSpy scrape (Indeed, LinkedIn, Google, Glassdoor)"},
+    "workday":  {"desc": "Workday API corporate scraper (48+ employers)"},
+    "bigtech":  {"desc": "Big Tech direct API scrapers (Microsoft, Google, Amazon, Meta)"},
     "enrich":   {"desc": "Detail enrichment (full descriptions + apply URLs)"},
     "score":    {"desc": "LLM scoring (fit 1-10)"},
     "tailor":   {"desc": "Resume tailoring (LLM + validation)"},
@@ -47,6 +50,9 @@ STAGE_META: dict[str, dict] = {
 # it has no remaining pending work.
 _UPSTREAM: dict[str, str | None] = {
     "discover": None,
+    "jobspy":  None,
+    "workday": None,
+    "bigtech": None,
     "enrich":   "discover",
     "score":    "enrich",
     "tailor":   "score",
@@ -60,43 +66,34 @@ _UPSTREAM: dict[str, str | None] = {
 # ---------------------------------------------------------------------------
 
 def _run_discover(workers: int = 1) -> dict:
-    """Stage: Job discovery — JobSpy, Workday, and smart-extract scrapers."""
-    stats: dict = {"jobspy": None, "workday": None, "smartextract": None}
+    """Stage: Job discovery — runs all sub-scrapers."""
+    results = {}
+    for sub_stage, fn in [("jobspy", _run_discover_jobspy), ("workday", _run_discover_workday), ("bigtech", _run_discover_bigtech)]:
+        try:
+            r = fn(workers=workers)
+            results[sub_stage] = r
+        except Exception as e:
+            log.error("%s failed: %s", sub_stage, e)
+            results[sub_stage] = f"error: {e}"
+    return results
 
-    # JobSpy
-    console.print("  [cyan]JobSpy full crawl...[/cyan]")
-    try:
-        from applypilot.discovery.jobspy import run_discovery
-        run_discovery()
-        stats["jobspy"] = "ok"
-    except Exception as e:
-        log.error("JobSpy crawl failed: %s", e)
-        console.print(f"  [red]JobSpy error:[/red] {e}")
-        stats["jobspy"] = f"error: {e}"
 
-    # Workday corporate scraper
-    console.print("  [cyan]Workday corporate scraper...[/cyan]")
-    try:
-        from applypilot.discovery.workday import run_workday_discovery
-        run_workday_discovery(workers=workers)
-        stats["workday"] = "ok"
-    except Exception as e:
-        log.error("Workday scraper failed: %s", e)
-        console.print(f"  [red]Workday error:[/red] {e}")
-        stats["workday"] = f"error: {e}"
+def _run_discover_jobspy(workers: int = 1) -> dict:
+    """Stage: JobSpy scrape."""
+    from applypilot.discovery.jobspy import run_discovery
+    return run_discovery()
 
-    # Smart extract
-    console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
-    try:
-        from applypilot.discovery.smartextract import run_smart_extract
-        run_smart_extract(workers=workers)
-        stats["smartextract"] = "ok"
-    except Exception as e:
-        log.error("Smart extract failed: %s", e)
-        console.print(f"  [red]Smart extract error:[/red] {e}")
-        stats["smartextract"] = f"error: {e}"
 
-    return stats
+def _run_discover_workday(workers: int = 1) -> dict:
+    """Stage: Workday API corporate scraper."""
+    from applypilot.discovery.workday import run_workday_discovery
+    return run_workday_discovery(workers=workers)
+
+
+def _run_discover_bigtech(workers: int = 1) -> dict:
+    """Stage: Big Tech direct API scrapers."""
+    from applypilot.discovery.bigtech import run_bigtech_discovery
+    return run_bigtech_discovery()
 
 
 def _run_enrich(workers: int = 1) -> dict:
@@ -157,6 +154,9 @@ def _run_pdf() -> dict:
 # Map stage names to their runner functions
 _STAGE_RUNNERS: dict[str, callable] = {
     "discover": _run_discover,
+    "jobspy":   _run_discover_jobspy,
+    "workday":  _run_discover_workday,
+    "bigtech":  _run_discover_bigtech,
     "enrich":   _run_enrich,
     "score":    _run_score,
     "tailor":   _run_tailor,
@@ -279,8 +279,8 @@ def _run_stage_streaming(
 
     upstream = _UPSTREAM[stage]
 
-    if stage == "discover":
-        # Discover runs once (its sub-scrapers already do their full crawl)
+    if stage in ("discover", "jobspy", "workday", "bigtech"):
+        # Discovery stages run once (their sub-scrapers already do the full crawl)
         try:
             result = runner(**kwargs)
             tracker.mark_done(stage, result)
@@ -345,7 +345,7 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
             if name in ("tailor", "cover"):
                 kwargs["min_score"] = min_score
                 kwargs["validation_mode"] = validation_mode
-            if name in ("discover", "enrich"):
+            if name in ("discover", "jobspy", "workday", "bigtech", "enrich"):
                 kwargs["workers"] = workers
             if name == "score":
                 kwargs["rescore"] = rescore
