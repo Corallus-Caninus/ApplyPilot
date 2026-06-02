@@ -29,6 +29,7 @@ blocked:
     - "%google.jobs%"
     - "%accenture%"
     - "%workopolis.com/out%"
+    - "%jobs.lever.co%"
 
 # ── Blocked SSO domains — cannot authenticate through these ──────────────
 blocked_sso:
