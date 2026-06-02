@@ -30,10 +30,8 @@ blocked:
     - "%accenture%"
     - "%workopolis.com/out%"
     - "%jobs.lever.co%"
-    - "%zillow.wd5.myworkdayjobs.com%"
-    - "%grnh.se%"
-
-# ── Blocked SSO domains — cannot authenticate through these ──────────────
+ 
+ # ── Blocked SSO domains
 blocked_sso:
   - "accounts.google.com"
   - "login.microsoftonline.com"
