@@ -310,7 +310,7 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                   AND (fit_score >= ? OR fit_score IS NULL)
                   {site_clause}
                   {url_clauses}
-                ORDER BY fit_score DESC, url
+                ORDER BY fit_score DESC, RANDOM()
                 LIMIT 1
             """, [config.DEFAULTS["max_apply_attempts"], min_score] + params).fetchone()
 
