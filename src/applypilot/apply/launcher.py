@@ -61,10 +61,18 @@ def _prober_thread_fn(chain: list) -> None:
         _time.sleep(_PROBER_INTERVAL)
 
 def _start_prober(chain: list) -> None:
-    """Start the background prober daemon thread."""
+    """Start the background prober daemon thread.
+
+    Runs an initial probe synchronously so the result is available immediately,
+    then continues polling every 30s in the background.
+    """
     global _prober_available
-    # Mark as "not yet probed" — chain loop will try normally until first probe
-    _prober_available = None
+    # Do the first probe synchronously — no race
+    if chain:
+        prov, model = chain[0]
+        ok = _probe_provider(prov, model)
+        _prober_available = (prov, model) if ok else False
+    # Background thread for subsequent probes
     t = threading.Thread(target=_prober_thread_fn, args=(chain,), daemon=True)
     t.start()
 
