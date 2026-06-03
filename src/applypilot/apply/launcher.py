@@ -140,7 +140,32 @@ def detect_provider_error(output: str) -> bool:
 
 def _build_provider_cmd(hermes_path: str, provider: str, model: str,
                         agent_prompt: str) -> tuple[list[str], dict]:
-    """Build Hermes CLI command + environment for a specific provider/model."""
+    """Build Hermes CLI command + environment for a specific provider/model.
+
+    Always creates a temporary Hermes config that sets ``agent.api_max_retries: 1``
+    so Hermes does exactly 1 API attempt per provider — no exponential-backoff
+    retries.  The launcher's own fallback chain handles switching providers when
+    one fails, so Hermes should fail fast and let us cut to the next provider.
+
+    The temp config is a copy of the real config with only the retry setting
+    overridden, so all other Hermes settings (providers, model defaults, etc.)
+    are preserved.
+    """
+    import tempfile as _tempfile
+    import yaml as _yaml
+    from pathlib import Path
+
+    _tmpdir = _tempfile.mkdtemp(prefix="hermes-applypilot-")
+
+    # Start with a copy of the real config, then override
+    _real_cfg_path = Path.home() / ".hermes" / "config.yaml"
+    if _real_cfg_path.exists():
+        with open(_real_cfg_path) as _fc:
+            _cfg: dict = _yaml.safe_load(_fc) or {}
+    else:
+        _cfg = {}
+    _cfg.setdefault("agent", {})["api_max_retries"] = 1
+
     cmd = [hermes_path, "chat", "-v"]
     env = os.environ.copy()
     env.pop("CLAUDECODE", None)
@@ -158,21 +183,13 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         env["HERMES_MODE"] = "go"
         env["REASONING_EFFORT"] = "low"
     elif provider == "gemini":
-        # Gemini uses a temporary Hermes config with the Google endpoint
-        import tempfile as _tempfile
-        import yaml as _yaml
-        _gemini_tmpdir = _tempfile.mkdtemp(prefix="hermes-gemini-")
-        _gemini_cfg = os.path.join(_gemini_tmpdir, "config.yaml")
         _gemini_key = os.environ.get("GEMINI_API_KEY", "")
-        with open(_gemini_cfg, "w") as _f:
-            _yaml.dump({
-                "model": {
-                    "provider": "custom",
-                    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-                    "default": model or "gemini-2.5-flash",
-                    "api_key": _gemini_key,
-                }}, _f)
-        env["HERMES_HOME"] = _gemini_tmpdir
+        _cfg["model"] = {
+            "provider": "custom",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "default": model or "gemini-2.5-flash",
+            "api_key": _gemini_key,
+        }
         env.pop("HERMES_MODE", None)
         env["REASONING_EFFORT"] = "low"
         cmd += ["-m", model or "gemini-2.5-flash"]
@@ -190,6 +207,12 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
     cmd += ["-q", agent_prompt]
     if model:
         env["LLM_MODEL"] = model
+
+    # Write the temp config and point HERMES_HOME to it
+    _tmp_cfg = os.path.join(_tmpdir, "config.yaml")
+    with open(_tmp_cfg, "w") as _f:
+        _yaml.dump(_cfg, _f, default_flow_style=False, sort_keys=False)
+    env["HERMES_HOME"] = _tmpdir
 
     return cmd, env
 
