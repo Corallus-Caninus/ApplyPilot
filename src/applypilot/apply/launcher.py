@@ -977,6 +977,22 @@ def main(limit: int = 1, target_url: str | None = None,
     # Double Ctrl+C handler
     _ctrl_c_count = 0
 
+    # ── Pre-flight provider probe ────────────────────────────────────────────────
+    # Test every provider in the chain at startup so we don't waste the first job
+    # discovering that a provider is rate-limited.
+    if provider_chain:
+        add_event("Probing provider chain at startup...")
+        for idx, (prov, model) in enumerate(provider_chain):
+            if idx == len(provider_chain) - 1:
+                break  # never cooldown the last resort
+            add_event(f"  Testing {prov}/{model}...")
+            if _probe_provider(prov, model):
+                add_event(f"  {prov}/{model} — available")
+            else:
+                add_event(f"  {prov}/{model} — UNAVAILABLE (cooldown {_PROVIDER_COOLDOWN_SECONDS}s)")
+                _set_provider_cooldown(prov)
+        add_event("Provider probing complete.")
+
     def _sigint_handler(sig, frame):
         nonlocal _ctrl_c_count
         _ctrl_c_count += 1
