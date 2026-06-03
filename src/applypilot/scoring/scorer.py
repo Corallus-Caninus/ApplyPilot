@@ -100,8 +100,13 @@ def score_job(resume_text: str, job: dict) -> dict:
         response = client.chat(messages, temperature=0.2)
         return _parse_score_response(response)
     except Exception as e:
-        log.error("LLM error scoring job '%s': %s", job.get("title", "?"), e)
-        return {"score": 0, "keywords": "", "reasoning": f"LLM error: {e}"}
+        log.error("LLM error scoring job '%s': %s — waiting 30s then retrying...", job.get("title", "?"), e)
+        import time as _time
+        _time.sleep(30)
+        # Reset the LLM client singleton so it re-initializes on next call
+        import applypilot.llm as _llm_mod
+        _llm_mod._instance = None
+        return score_job(resume_text, job)  # retry recursively
 
 
 def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
