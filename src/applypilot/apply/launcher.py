@@ -39,6 +39,30 @@ from applypilot.apply.dashboard import (
 
 logger = logging.getLogger(__name__)
 
+# ── Provider cooldown ───────────────────────────────────────────────────────────
+# When a higher-priority provider is rate-limited, skip it on subsequent jobs
+# for this many seconds. The prober clears the cooldown when it detects recovery.
+_PROVIDER_COOLDOWN_SECONDS = 300  # 5 minutes
+_provider_cooldowns: dict[str, float] = {}  # provider_name -> expiry timestamp
+_provider_cooldown_lock = threading.Lock()
+
+def _is_provider_on_cooldown(provider: str) -> bool:
+    with _provider_cooldown_lock:
+        expiry = _provider_cooldowns.get(provider, 0)
+        if time.time() < expiry:
+            return True
+        # Expired — clean up
+        _provider_cooldowns.pop(provider, None)
+        return False
+
+def _set_provider_cooldown(provider: str) -> None:
+    with _provider_cooldown_lock:
+        _provider_cooldowns[provider] = time.time() + _PROVIDER_COOLDOWN_SECONDS
+
+def _clear_provider_cooldown(provider: str) -> None:
+    with _provider_cooldown_lock:
+        _provider_cooldowns.pop(provider, None)
+
 # ── Provider fallback chain ─────────────────────────────────────────────────────
 # Patterns in Hermes/LLM output that indicate a provider error (rate-limit,
 # outage, auth failure, model unavailable, etc.) — triggers fallback to next
@@ -201,6 +225,7 @@ def _mid_job_switch_prober(proc, chain: list, current_idx: int,
         for idx in range(current_idx):
             prov, model = chain[idx]
             if _probe_provider(prov, model):
+                _clear_provider_cooldown(prov)
                 payload = json.dumps({
                     "provider": prov,
                     "model": model,
@@ -546,6 +571,11 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     last_model = ""
 
     for chain_idx, (provider, model) in enumerate(provider_chain):
+        # Skip providers on cooldown (rate-limited, recently failed)
+        if chain_idx < len(provider_chain) - 1 and _is_provider_on_cooldown(provider):
+            add_event(f"[W{worker_id}] {provider}/{model} on cooldown — skipping")
+            continue
+
         last_provider = provider
         last_model = model
         label = f"{provider}/{model}" if provider else "default"
@@ -651,6 +681,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 
                 # Check if the result is actually a provider error disguised as RESULT:FAILED
                 if status_key.startswith("failed:") and detect_provider_error(output):
+                    _set_provider_cooldown(provider)
                     if chain_idx < chain_len - 1:
                         add_event(f"[W{worker_id}] {label} provider error (fallback #{chain_idx + 2})")
                         continue  # try next provider
