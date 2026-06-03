@@ -3,7 +3,7 @@
    Usage: python3 run_apply.py [--workers N] [--provider P] [--model M] [--no-fallback]
 
    Default provider priority chain (auto-fallback on failure):
-     1. OpenRouter  (nvidia/nemotron-3-super-120b-a12b:free) — free, agent-optimized
+     1. OpenRouter  (google/gemma-4-26b-a4b-it:free) — free, fast
      2. OpenCode Zen (deepseek-v4-flash-free)        — free, fallback
      3. OpenCode Go  (deepseek-v4-flash)             — $10/mo, unlimited fallback
 
@@ -16,7 +16,7 @@ load_env()
 
 # Default priority chain: highest priority first
 DEFAULT_PROVIDER_CHAIN = [
-    ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
+    ("openrouter", "google/gemma-4-26b-a4b-it:free"),
     ("opencode-zen", "deepseek-v4-flash-free"),
     ("opencode-go", "deepseek-v4-flash"),
 ]

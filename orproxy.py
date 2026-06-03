@@ -23,7 +23,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 PORT = int(os.environ.get("PROXY_PORT", "6378"))
 OR_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-TARGET_MODEL = os.environ.get("PROXY_TARGET_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
+TARGET_MODEL = os.environ.get("PROXY_TARGET_MODEL", "google/gemma-4-26b-a4b-it:free")
 SENTINEL_MODEL = os.environ.get("PROXY_SENTINEL_MODEL", "claude-sonnet-4-20250514")
 
 if not OR_KEY:
