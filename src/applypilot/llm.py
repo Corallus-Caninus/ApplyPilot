@@ -2,7 +2,7 @@
 Unified LLM client for ApplyPilot.
 
 Provider auto-detection priority:
-  OPENROUTER_API_KEY  -> OpenRouter (default: google/gemma-4-31b-it:free)
+  OPENROUTER_API_KEY  -> OpenRouter (default: meta-llama/llama-3.3-70b-instruct:free)
   OPENCODE_API_KEY    -> OpenCode Zen/Go (default: deepseek-v4-flash)
   GEMINI_API_KEY      -> Google Gemini (default: gemini-2.5-flash)
   OPENAI_API_KEY      -> OpenAI (default: gpt-4o-mini)
@@ -76,7 +76,7 @@ def _detect_provider() -> tuple[str, str, str]:
             raise RuntimeError("LLM_PROVIDER=openrouter but OPENROUTER_API_KEY is not set.")
         return (
             base,
-            model_override or "google/gemma-4-31b-it:free",
+            model_override or "meta-llama/llama-3.3-70b-instruct:free",
             key,
         )
 
@@ -146,7 +146,7 @@ def _detect_provider() -> tuple[str, str, str]:
     if or_key and not local_url:
         return (
             os.environ.get("OPENROUTER_BASE_URL", _OPENROUTER_DEFAULT_BASE).rstrip("/"),
-            model_override or "google/gemma-4-31b-it:free",
+            model_override or "meta-llama/llama-3.3-70b-instruct:free",
             or_key,
         )
 

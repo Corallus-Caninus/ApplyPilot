@@ -31,7 +31,7 @@ Starts the continuous apply loop. Picks the highest-scored unprocessed job from 
 | `opencode-zen` | deepseek-v4-flash-free | Zen (free or prepaid) | `OPENCODE_API_KEY` | free / varies |
 | `opencode-go` | deepseek-v4-flash | Zen Go subscription | `OPENCODE_API_KEY` | $10/month |
 | `gemini` | gemini-2.5-flash | Google Gemini API | `GEMINI_API_KEY` | free (1500 req/day) |
-| `openrouter` | google/gemma-4-31b-it:free | OpenRouter free tier | `OPENROUTER_API_KEY` | free |
+| `openrouter` | meta-llama/llama-3.3-70b-instruct:free | OpenRouter free tier | `OPENROUTER_API_KEY` | free |
 
 `opencode` and `opencode-zen` use `HERMES_MODE=zen` (free models like `deepseek-v4-flash-free`, `big-pickle`). `opencode-go` uses `HERMES_MODE=go` (subscription, strips `-free` suffix from model name). The same `opencode-go-key` file at `~/Code/hermes/opencode-go-key` works for all — Go is a subscription tier within Zen.
 
@@ -93,7 +93,7 @@ You need at least one API key. The apply loop auto-detects which keys are set:
   ```
   OPENROUTER_API_KEY=sk-or-v1-...
   ```
-  Free models include google/gemma-4-31b-it:free, nvidia/nemotron-3-super-120b-a12b:free,
+  Free models include meta-llama/llama-3.3-70b-instruct:free, nvidia/nemotron-3-super-120b-a12b:free,
   google/gemini-2.0-flash-exp:free, and others. Separate quota from direct Google API.
 
 **Explicit provider selection** — set `LLM_PROVIDER` to override auto-detect:
