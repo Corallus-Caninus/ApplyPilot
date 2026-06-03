@@ -592,6 +592,23 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     if not provider_chain:
         provider_chain = [("", "")]
 
+    # Pre-flight: quick-probe all providers. If none available, skip this job
+    # without spawning Hermes and burning the 15-min timeout.
+    available = []
+    for prov, mod in provider_chain:
+        if not prov:
+            available.append((prov, mod))
+        elif prov == "openrouter" and _probe_provider(prov, mod):
+            available.append((prov, mod))
+        elif prov != "openrouter":
+            available.append((prov, mod))  # non-OpenRouter pass through
+    if not available:
+        add_event(f"[W{worker_id}] All providers unavailable — skipping job")
+        return "failed:all_providers_unavailable", 0
+
+    # Use probed-available chain for the job
+    provider_chain = available
+
     # Read tailored resume text
     resume_path = job.get("tailored_resume_path")
     txt_path = Path(resume_path).with_suffix(".txt") if resume_path else None
