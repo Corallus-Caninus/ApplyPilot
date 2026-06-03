@@ -403,7 +403,7 @@ def doctor() -> None:
     has_local = bool(os.environ.get("LLM_URL"))
     provider_override = os.environ.get("LLM_PROVIDER", "").lower().strip()
     if has_openrouter or provider_override == "openrouter":
-        model = os.environ.get("LLM_MODEL", "google/gemma-4-26b-a4b-it:free")
+        model = os.environ.get("LLM_MODEL", "google/gemma-4-31b-it:free")
         results.append(("LLM API key", ok_mark, f"OpenRouter ({model})"))
     elif has_opencode or provider_override == "opencode":
         model = os.environ.get("LLM_MODEL", "deepseek-v4-flash")
