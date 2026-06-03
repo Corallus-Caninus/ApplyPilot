@@ -4,12 +4,14 @@
 
    Default provider priority chain (auto-fallback on failure):
      1. OpenRouter  (nousresearch/hermes-3-llama-3.1-405b:free) — 405B dense, best agentic
-     2. OpenRouter  (meta-llama/llama-3.3-70b-instruct:free) — 70B dense, strong
-     3. OpenRouter  (nvidia/nemotron-3-super-120b-a12b:free) — 12B active MoE, agentic-optimized
-     4. OpenRouter  (google/gemma-4-31b-it:free)        — 31B dense, good (rate-limited)
-     5. OpenRouter  (openai/gpt-oss-120b:free)          — 120B dense (was down)
-     6. OpenRouter  (z-ai/glm-4.5-air:free)             — compact MoE fallback
-     # 7. opencode-go (deepseek-v4-flash) — commented to save tokens
+     2. OpenRouter  (qwen/qwen3-coder:free)                 — 35B active MoE, excellent tool use, 1M ctx
+     3. OpenRouter  (meta-llama/llama-3.3-70b-instruct:free) — 70B dense, strong
+     4. OpenRouter  (nvidia/nemotron-3-super-120b-a12b:free) — 12B active MoE, agentic-optimized
+     5. OpenRouter  (moonshotai/kimi-k2.6:free)           — MoE, strong long-context
+     6. OpenRouter  (google/gemma-4-31b-it:free)        — 31B dense, good (rate-limited)
+     7. OpenRouter  (openai/gpt-oss-120b:free)          — 120B dense (was down)
+     8. OpenRouter  (z-ai/glm-4.5-air:free)             — compact MoE fallback
+     # 9. opencode-go (deepseek-v4-flash) — commented to save tokens
 
    Use --provider and/or --model to pin to a single provider (no fallback)."""
 import sys, os, subprocess, time, signal
@@ -21,8 +23,10 @@ load_env()
 # Default priority chain: highest priority first
 DEFAULT_PROVIDER_CHAIN = [
     ("openrouter", "nousresearch/hermes-3-llama-3.1-405b:free"),
+    ("openrouter", "qwen/qwen3-coder:free"),
     ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
     ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
+    ("openrouter", "moonshotai/kimi-k2.6:free"),
     ("openrouter", "google/gemma-4-31b-it:free"),
     ("openrouter", "openai/gpt-oss-120b:free"),
     ("openrouter", "z-ai/glm-4.5-air:free"),
