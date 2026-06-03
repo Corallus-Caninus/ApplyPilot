@@ -6,7 +6,7 @@
      1. OpenRouter  (nvidia/nemotron-3-super-120b-a12b:free) — free, MoE
      2. OpenRouter  (meta-llama/llama-3.3-70b-instruct:free) — free, dense
      3. OpenRouter  (openai/gpt-oss-120b:free)          — free, dense
-     4. OpenCode Go  (deepseek-v4-flash)                — $10/mo, unlimited
+     # 4. opencode-go (deepseek-v4-flash) — commented to save tokens
 
    Use --provider and/or --model to pin to a single provider (no fallback)."""
 import sys, os, subprocess, time, signal
@@ -20,7 +20,7 @@ DEFAULT_PROVIDER_CHAIN = [
     ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
     ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
     ("openrouter", "openai/gpt-oss-120b:free"),
-    ("opencode-go", "deepseek-v4-flash"),
+    # ("opencode-go", "deepseek-v4-flash"),  # commented - saving tokens
 ]
 
 # Parse flags
