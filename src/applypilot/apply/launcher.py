@@ -130,13 +130,27 @@ def _probe_provider(provider: str, model: str) -> bool:
     """
     import urllib.request
     import urllib.error
+    import json as _json
 
     try:
         if provider == "openrouter":
-            # OpenRouter's model list endpoint requires no auth for basic probing
+            # Actually probe the specific model with a real chat completion call
+            api_key = os.environ.get("OPENROUTER_API_KEY", "")
+            if not api_key:
+                return False
+            body = _json.dumps({
+                "model": model,
+                "messages": [{"role": "user", "content": "ok"}],
+                "max_tokens": 1,
+            }).encode()
             req = urllib.request.Request(
-                "https://openrouter.ai/api/v1/models",
-                headers={"User-Agent": "hermes-agent-probe/1.0"},
+                "https://openrouter.ai/api/v1/chat/completions",
+                data=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                    "User-Agent": "hermes-agent-probe/1.0",
+                },
             )
             resp = urllib.request.urlopen(req, timeout=10)
             return resp.status == 200
