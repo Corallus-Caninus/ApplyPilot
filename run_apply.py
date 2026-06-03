@@ -3,8 +3,8 @@
    Usage: python3 run_apply.py [--workers N] [--provider P] [--model M] [--no-fallback]
 
    Default provider priority chain (auto-fallback on failure):
-     1. OpenRouter  (meta-llama/llama-3.3-70b-instruct:free) — free, fast
-     2. OpenCode Zen (deepseek-v4-flash-free)        — free, fallback
+     1. OpenRouter  (meta-llama/llama-3.3-70b-instruct:free) — free, dense
+     2. Google Gemini (gemini-2.5-flash)               — free (1500/day), dense
      3. OpenCode Go  (deepseek-v4-flash)             — $10/mo, unlimited fallback
 
    Use --provider and/or --model to pin to a single provider (no fallback)."""
@@ -17,7 +17,7 @@ load_env()
 # Default priority chain: highest priority first
 DEFAULT_PROVIDER_CHAIN = [
     ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
-    ("opencode-zen", "deepseek-v4-flash-free"),
+    ("gemini", "gemini-2.5-flash"),
     ("opencode-go", "deepseek-v4-flash"),
 ]
 
