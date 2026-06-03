@@ -3,9 +3,9 @@
    Usage: python3 run_apply.py [--workers N] [--provider P] [--model M] [--no-fallback]
 
    Default provider priority chain (auto-fallback on failure):
-     1. OpenRouter  (meta-llama/llama-3.3-70b-instruct:free) — free, dense
-     2. OpenRouter  (openai/gpt-oss-120b:free)          — free, dense
-     3. OpenRouter  (nvidia/nemotron-3-super-120b-a12b:free) — free, MoE
+     1. OpenRouter  (nvidia/nemotron-3-super-120b-a12b:free) — free, MoE
+     2. OpenRouter  (meta-llama/llama-3.3-70b-instruct:free) — free, dense
+     3. OpenRouter  (openai/gpt-oss-120b:free)          — free, dense
      4. OpenCode Go  (deepseek-v4-flash)                — $10/mo, unlimited
 
    Use --provider and/or --model to pin to a single provider (no fallback)."""
@@ -17,9 +17,9 @@ load_env()
 
 # Default priority chain: highest priority first
 DEFAULT_PROVIDER_CHAIN = [
+    ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
     ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
     ("openrouter", "openai/gpt-oss-120b:free"),
-    ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
     ("opencode-go", "deepseek-v4-flash"),
 ]
 
