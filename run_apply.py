@@ -4,8 +4,9 @@
 
    Default provider priority chain (auto-fallback on failure):
      1. OpenRouter  (meta-llama/llama-3.3-70b-instruct:free) — free, dense
-     2. Google Gemini (gemini-2.5-flash)               — free (1500/day), dense
-     3. OpenCode Go  (deepseek-v4-flash)             — $10/mo, unlimited fallback
+     2. OpenRouter  (openai/gpt-oss-120b:free)          — free, dense
+     3. OpenRouter  (nvidia/nemotron-3-super-120b-a12b:free) — free, MoE
+     4. OpenCode Go  (deepseek-v4-flash)                — $10/mo, unlimited
 
    Use --provider and/or --model to pin to a single provider (no fallback)."""
 import sys, os, subprocess, time, signal
@@ -17,7 +18,8 @@ load_env()
 # Default priority chain: highest priority first
 DEFAULT_PROVIDER_CHAIN = [
     ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
-    ("gemini", "gemini-2.5-flash"),
+    ("openrouter", "openai/gpt-oss-120b:free"),
+    ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
     ("opencode-go", "deepseek-v4-flash"),
 ]
 
