@@ -5,9 +5,8 @@
    Default provider priority chain (auto-fallback on failure):
      1. OpenRouter  (meta-llama/llama-3.3-70b-instruct:free) — free, Venice
      2. OpenRouter  (openai/gpt-oss-120b:free)          — free, OpenInference
-     3. OpenRouter  (poolside/laguna-m.1:free)          — free, Poolside
-     4. OpenRouter  (z-ai/glm-4.5-air:free)             — free, Z.AI
-     5. OpenRouter  (nvidia/nemotron-3-super-120b-a12b:free) — free, Nvidia
+     3. OpenRouter  (z-ai/glm-4.5-air:free)             — free, Z.AI
+     4. OpenRouter  (nvidia/nemotron-3-super-120b-a12b:free) — free, Nvidia
      # 6. opencode-go (deepseek-v4-flash) — commented to save tokens
 
    Use --provider and/or --model to pin to a single provider (no fallback)."""
@@ -21,7 +20,6 @@ load_env()
 DEFAULT_PROVIDER_CHAIN = [
     ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
     ("openrouter", "openai/gpt-oss-120b:free"),
-    ("openrouter", "poolside/laguna-m.1:free"),
     ("openrouter", "z-ai/glm-4.5-air:free"),
     ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
     # ("opencode-go", "deepseek-v4-flash"),  # commented - saving tokens
