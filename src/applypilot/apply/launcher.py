@@ -206,6 +206,25 @@ def _probe_provider(provider: str, model: str) -> bool:
             )
             resp = urllib.request.urlopen(req, timeout=10)
             return resp.status == 200
+        elif provider == "gemini":
+            api_key = os.environ.get("GEMINI_API_KEY", "")
+            if not api_key:
+                return False
+            body = _json.dumps({
+                "model": model or "gemini-2.5-flash",
+                "messages": [{"role": "user", "content": "ok"}],
+                "max_tokens": 1,
+            }).encode()
+            req = urllib.request.Request(
+                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                data=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+            )
+            resp = urllib.request.urlopen(req, timeout=10)
+            return resp.status == 200
         elif provider in ("opencode", "opencode-zen", "opencode-go"):
             # OpenCode — hit the models endpoint with the API key
             key_path = os.path.expanduser("~/Code/hermes/opencode-go-key")
