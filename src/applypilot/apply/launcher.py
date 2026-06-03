@@ -157,6 +157,14 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         cmd += ["-m", model or "deepseek-v4-flash"]
         env["HERMES_MODE"] = "go"
         env["REASONING_EFFORT"] = "low"
+    elif provider == "gemini":
+        # Gemini uses LLM_URL/LLM_API_KEY env vars — not --provider flag
+        env["LLM_URL"] = "https://generativelanguage.googleapis.com/v1beta/openai"
+        env["LLM_API_KEY"] = os.environ.get("GEMINI_API_KEY", "")
+        env["LLM_MODEL"] = model or "gemini-2.5-flash"
+        env["REASONING_EFFORT"] = "low"
+        # Don't pass --provider, use -m for the model name
+        cmd += ["-m", model or "gemini-2.5-flash"]
     elif provider == "openrouter":
         cmd += ["--provider", "openrouter"]
         cmd += ["-m", model or "openrouter/owl-alpha"]
