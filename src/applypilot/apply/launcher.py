@@ -39,29 +39,36 @@ from applypilot.apply.dashboard import (
 
 logger = logging.getLogger(__name__)
 
-# ── Provider cooldown ───────────────────────────────────────────────────────────
-# When a higher-priority provider is rate-limited, skip it on subsequent jobs
-# for this many seconds. The prober clears the cooldown when it detects recovery.
-_PROVIDER_COOLDOWN_SECONDS = 300  # 5 minutes
-_provider_cooldowns: dict[str, float] = {}  # provider_name -> expiry timestamp
-_provider_cooldown_lock = threading.Lock()
+# ── Background provider prober ──────────────────────────────────────────────────
+# Polls the highest-priority provider every 30s. When it recovers, we switch back.
+# This runs regardless of whether a job is in progress.
+_prober_available: tuple[str, str] | None = None  # (provider, model) or None if unavailable
+_prober_lock = threading.Lock()
+_PROBER_INTERVAL = 30
 
-def _is_provider_on_cooldown(provider: str) -> bool:
-    with _provider_cooldown_lock:
-        expiry = _provider_cooldowns.get(provider, 0)
-        if time.time() < expiry:
-            return True
-        # Expired — clean up
-        _provider_cooldowns.pop(provider, None)
-        return False
+def _prober_thread_fn(chain: list) -> None:
+    """Background thread: probes highest-priority provider every 30s."""
+    global _prober_available
+    import time as _time
+    while True:
+        _time.sleep(_PROBER_INTERVAL)
+        if not chain:
+            continue
+        # Only probe the highest-priority provider (index 0)
+        prov, model = chain[0]
+        ok = _probe_provider(prov, model)
+        with _prober_lock:
+            _prober_available = (prov, model) if ok else None
 
-def _set_provider_cooldown(provider: str) -> None:
-    with _provider_cooldown_lock:
-        _provider_cooldowns[provider] = time.time() + _PROVIDER_COOLDOWN_SECONDS
+def _start_prober(chain: list) -> None:
+    """Start the background prober daemon thread."""
+    t = threading.Thread(target=_prober_thread_fn, args=(chain,), daemon=True)
+    t.start()
 
-def _clear_provider_cooldown(provider: str) -> None:
-    with _provider_cooldown_lock:
-        _provider_cooldowns.pop(provider, None)
+def _get_best_available() -> tuple[str, str] | None:
+    """Get the highest-priority provider that's currently available, or None."""
+    with _prober_lock:
+        return _prober_available
 
 # ── Provider fallback chain ─────────────────────────────────────────────────────
 # Patterns in Hermes/LLM output that indicate a provider error (rate-limit,
@@ -225,7 +232,6 @@ def _mid_job_switch_prober(proc, chain: list, current_idx: int,
         for idx in range(current_idx):
             prov, model = chain[idx]
             if _probe_provider(prov, model):
-                _clear_provider_cooldown(prov)
                 payload = json.dumps({
                     "provider": prov,
                     "model": model,
@@ -571,10 +577,15 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     last_model = ""
 
     for chain_idx, (provider, model) in enumerate(provider_chain):
-        # Skip providers on cooldown (rate-limited, recently failed)
-        if chain_idx < len(provider_chain) - 1 and _is_provider_on_cooldown(provider):
-            add_event(f"[W{worker_id}] {provider}/{model} on cooldown — skipping")
-            continue
+        # Check if the background prober says a higher-priority provider is available.
+        # If we're not on the highest priority and the prober says it's back, skip
+        # ahead to use it instead of trying the current fallback.
+        best = _get_best_available()
+        if best and chain_idx > 0 and provider_chain[0] == best:
+            # Prober says highest-priority provider recovered — jump to it
+            provider, model = best
+            chain_idx = 0
+            add_event(f"[W{worker_id}] Prober detected recovery — switching to {provider}/{model}")
 
         last_provider = provider
         last_model = model
@@ -681,7 +692,6 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 
                 # Check if the result is actually a provider error disguised as RESULT:FAILED
                 if status_key.startswith("failed:") and detect_provider_error(output):
-                    _set_provider_cooldown(provider)
                     if chain_idx < chain_len - 1:
                         add_event(f"[W{worker_id}] {label} provider error (fallback #{chain_idx + 2})")
                         continue  # try next provider
@@ -977,21 +987,12 @@ def main(limit: int = 1, target_url: str | None = None,
     # Double Ctrl+C handler
     _ctrl_c_count = 0
 
-    # ── Pre-flight provider probe ────────────────────────────────────────────────
-    # Test every provider in the chain at startup so we don't waste the first job
-    # discovering that a provider is rate-limited.
+    # ── Start background provider prober ──────────────────────────────────────────
+    # Polls the highest-priority provider every 30s so we know immediately when
+    # it recovers and can switch back even mid-job.
     if provider_chain:
-        add_event("Probing provider chain at startup...")
-        for idx, (prov, model) in enumerate(provider_chain):
-            if idx == len(provider_chain) - 1:
-                break  # never cooldown the last resort
-            add_event(f"  Testing {prov}/{model}...")
-            if _probe_provider(prov, model):
-                add_event(f"  {prov}/{model} — available")
-            else:
-                add_event(f"  {prov}/{model} — UNAVAILABLE (cooldown {_PROVIDER_COOLDOWN_SECONDS}s)")
-                _set_provider_cooldown(prov)
-        add_event("Provider probing complete.")
+        _start_prober(provider_chain)
+        add_event("Background provider prober started (every 30s)")
 
     def _sigint_handler(sig, frame):
         nonlocal _ctrl_c_count
