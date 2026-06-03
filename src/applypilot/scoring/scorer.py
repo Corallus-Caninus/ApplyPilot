@@ -7,11 +7,12 @@ profile and resume file.
 
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timezone
 
-from applypilot.config import RESUME_PATH, load_profile
+from applypilot.config import RESUME_PATH, DEFAULT_PROVIDER_CHAIN, load_profile
 from applypilot.database import get_connection, get_jobs_by_stage
 from applypilot.llm import get_client
 
@@ -73,16 +74,25 @@ def _parse_score_response(response: str) -> dict:
     return {"score": score, "keywords": keywords, "reasoning": reasoning}
 
 
-def score_job(resume_text: str, job: dict) -> dict:
+def score_job(resume_text: str, job: dict,
+              provider_chain: list | None = None) -> dict:
     """Score a single job against the resume.
+
+    Tries each provider in the chain in priority order.  When all providers
+    fail (401, 429, timeout, etc.), waits 30s and retries the whole chain
+    — loops indefinitely until a score is obtained or the process is killed.
 
     Args:
         resume_text: The candidate's full resume text.
         job: Job dict with keys: title, site, location, full_description.
+        provider_chain: List of (provider, model) tuples, highest priority first.
 
     Returns:
         {"score": int, "keywords": str, "reasoning": str}
     """
+    if provider_chain is None:
+        provider_chain = DEFAULT_PROVIDER_CHAIN
+
     job_text = (
         f"TITLE: {job['title']}\n"
         f"COMPANY: {job['site']}\n"
@@ -95,30 +105,51 @@ def score_job(resume_text: str, job: dict) -> dict:
         {"role": "user", "content": f"RESUME:\n{resume_text}\n\n---\n\nJOB POSTING:\n{job_text}"},
     ]
 
-    try:
-        client = get_client()
-        response = client.chat(messages, temperature=0.2)
-        return _parse_score_response(response)
-    except Exception as e:
-        log.error("LLM error scoring job '%s': %s — waiting 30s then retrying...", job.get("title", "?"), e)
-        import time as _time
-        _time.sleep(30)
-        # Reset the LLM client singleton so it re-initializes on next call
-        import applypilot.llm as _llm_mod
-        _llm_mod._instance = None
-        return score_job(resume_text, job)  # retry recursively
+    while True:
+        for provider, model in provider_chain:
+            # Set env vars so get_client() picks the right provider/model
+            os.environ["LLM_PROVIDER"] = provider
+            if model:
+                os.environ["LLM_MODEL"] = model
+
+            # Reset the client singleton so it re-initializes on next call
+            import applypilot.llm as _llm_mod
+            _llm_mod._instance = None
+
+            try:
+                client = get_client()
+                response = client.chat(messages, temperature=0.2)
+                return _parse_score_response(response)
+            except Exception as e:
+                log.warning(
+                    "Score attempt failed for '%s' with %s/%s: %s",
+                    job.get("title", "?"), provider, model, e,
+                )
+                continue  # try next provider
+
+        # All providers failed — wait 30s then loop the chain again
+        log.error(
+            "All providers failed scoring '%s' — waiting 30s then retrying chain...",
+            job.get("title", "?"),
+        )
+        time.sleep(30)
 
 
-def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
+def run_scoring(limit: int = 0, rescore: bool = False,
+                provider_chain: list | None = None) -> dict:
     """Score unscored jobs that have full descriptions.
 
     Args:
         limit: Maximum number of jobs to score in this run.
         rescore: If True, re-score all jobs (not just unscored ones).
+        provider_chain: List of (provider, model) tuples for LLM fallback.
 
     Returns:
         {"scored": int, "errors": int, "elapsed": float, "distribution": list}
     """
+    if provider_chain is None:
+        provider_chain = DEFAULT_PROVIDER_CHAIN
+
     resume_text = RESUME_PATH.read_text(encoding="utf-8")
     conn = get_connection()
 
@@ -154,7 +185,7 @@ def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
     errors = 0
 
     for job in jobs:
-        result = score_job(resume_text, job)
+        result = score_job(resume_text, job, provider_chain=provider_chain)
         result["url"] = job["url"]
         completed += 1
 
@@ -186,7 +217,7 @@ def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
     distribution = [(row[0], row[1]) for row in dist]
 
     return {
-        "scored": len(results),
+        "scored": completed,
         "errors": errors,
         "elapsed": elapsed,
         "distribution": distribution,

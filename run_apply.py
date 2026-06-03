@@ -20,18 +20,7 @@ sys.path.insert(0, os.path.expanduser("~/Code/applypilot/.venv/lib/python3.11/si
 from applypilot.config import load_env
 load_env()
 
-# Default priority chain: highest priority first
-DEFAULT_PROVIDER_CHAIN = [
-    ("openrouter", "nousresearch/hermes-3-llama-3.1-405b:free"),
-    ("openrouter", "qwen/qwen3-coder:free"),
-    ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
-    ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
-    ("openrouter", "moonshotai/kimi-k2.6:free"),
-    ("openrouter", "google/gemma-4-31b-it:free"),
-    ("openrouter", "openai/gpt-oss-120b:free"),
-    ("openrouter", "z-ai/glm-4.5-air:free"),
-    # ("opencode-go", "deepseek-v4-flash"),  # commented - saving tokens
-]
+from applypilot.config import DEFAULT_PROVIDER_CHAIN
 
 # Parse flags
 workers = 1

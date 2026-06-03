@@ -177,11 +177,9 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
     if provider == "opencode" or provider == "opencode-zen":
         cmd += ["-m", model or "deepseek-v4-flash-free"]
         env["HERMES_MODE"] = "zen"
-        env["REASONING_EFFORT"] = "low"
     elif provider == "opencode-go":
         cmd += ["-m", model or "deepseek-v4-flash"]
         env["HERMES_MODE"] = "go"
-        env["REASONING_EFFORT"] = "low"
     elif provider == "gemini":
         _gemini_key = os.environ.get("GEMINI_API_KEY", "")
         _cfg["model"] = {
@@ -191,18 +189,15 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
             "api_key": _gemini_key,
         }
         env.pop("HERMES_MODE", None)
-        env["REASONING_EFFORT"] = "low"
         cmd += ["-m", model or "gemini-2.5-flash"]
     elif provider == "openrouter":
         cmd += ["--provider", "openrouter"]
         cmd += ["-m", model or "openrouter/owl-alpha"]
-        env["REASONING_EFFORT"] = "low"
     else:
         if provider:
             cmd += ["--provider", provider]
         if model:
             cmd += ["-m", model]
-        env["REASONING_EFFORT"] = "low"
 
     cmd += ["-q", agent_prompt]
     if model:

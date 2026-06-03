@@ -107,11 +107,14 @@ def _run_enrich(workers: int = 1) -> dict:
         return {"status": f"error: {e}"}
 
 
+from applypilot.config import DEFAULT_PROVIDER_CHAIN
+
+
 def _run_score(rescore: bool = False) -> dict:
     """Stage: LLM scoring — assign fit scores 1-10."""
     try:
         from applypilot.scoring.scorer import run_scoring
-        run_scoring(rescore=rescore)
+        run_scoring(rescore=rescore, provider_chain=DEFAULT_PROVIDER_CHAIN)
         return {"status": "ok"}
     except Exception as e:
         log.error("Scoring failed: %s", e)
