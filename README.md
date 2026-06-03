@@ -1,82 +1,177 @@
-# ApplyPilot
+# ApplyPilot — Automated Job Application Pipeline
 
-AI-powered job application pipeline. Scrapes job boards, scores listings by fit, and auto-submits applications via an autonomous AI agent.
+## Prerequisites
 
-## What's different in this fork
-
-This fork replaces the original Claude Code-based apply agent with **Hermes Agent** running on **opencode.ai** (deepseek-v4-flash), making it drastically more affordable — approximately free versus $3-5 per Claude Code session.
-
-### Key changes
-
-- **Hermes Agent** — replaces Claude Code CLI for form-filling and submission
-- **Smart site routing** — jobs scraped from Indeed/LinkedIn are auto-rerouted to the company's own ATS (Workday, Greenhouse, Lever, etc.), bypassing Cloudflare blocks on job boards
-- **Fast failure** — the agent bails in 1-2 calls on Cloudflare blocks, expired listings, or login walls (was 50-150 calls burning the full timeout)
-- **Process group cleanup** — Hermes child processes (Playwright MCP, terminal sessions) are properly reaped on timeout, no more stuck `in_progress` jobs
-- **Rescore flag** — `--rescore` to re-evaluate all jobs after a resume update
-- **NixOS support** — `run-ap.sh` wrapper auto-detects store paths for numpy/pandas compatibility
-
-## Quick start
+Chrome must be running on port 9515 for the apply pipeline to connect to:
 
 ```bash
-# 1. Install
-pip install applypilot
-
-# 2. Set up profile
-applypilot init
-
-# 3. Start Chrome on debug port
-bash start-chrome.sh
-
-# 4. Find jobs
-bash run-ap.sh run discover
-
-# 5. Score them by fit
-bash run-ap.sh run score
-
-# 6. Apply — picks highest scores first
-python3 run_apply.py
+bash ~/Code/applypilot/start-chrome.sh
 ```
 
 ## Commands
 
-| Command | What it does |
-|---------|-------------|
-| `run-ap.sh run discover` | Scrape job boards (Indeed, LinkedIn, Workday corporate sites) |
-| `run-ap.sh run enrich` | Scrape full descriptions and apply URLs from each listing |
-| `run-ap.sh run score` | LLM-evaluate each job vs your resume, assign 1-10 fit score |
-| `run-ap.sh run score --rescore` | Re-score all jobs (use after resume update) |
-| `run-ap.sh run tailor` | Generate per-job customized resumes (optional) |
-| `run-ap.sh run cover` | Generate per-job cover letters (optional) |
-| `run-ap.sh run all` | Run discover → enrich → score → tailor → cover → pdf |
-| `run-ap.sh status` | Show pipeline stats |
-| `python3 run_apply.py` | Start auto-apply loop (continuous, highest scores first) |
+### Run the apply loop
 
-## How site routing works
-
-When JobSpy finds a job on Indeed, it also returns a `job_url_direct` — the company's actual career page URL. This fork derives the apply destination from that URL:
-
-| Scraped from | Direct URL | Stored as | Can apply? |
-|-------------|-----------|-----------|-----------|
-| Indeed | `nvidia.wd5.myworkdayjobs.com/...` | `Nvidia` | Yes — on Workday |
-| Indeed | `jobs.lever.co/company/...` | `Company` | Yes — on Lever |
-| Indeed | `www.indeed.com/job/...` | `indeed` | No — blocked (Cloudflare) |
-| LinkedIn | *(none)* | `linkedin` | No — blocked (needs account) |
-
-Blocked jobs are skipped automatically. Only jobs at real company ATS pages get submitted.
-
-## Requirements
-
-- Python 3.11+
-- Chrome/Chromium (for Playwright MCP)
-- Hermes Agent (install separately)
-- opencode.ai API key (or any OpenAI-compatible endpoint)
-
-## Environment
-
-Set in `~/.applypilot/.env`:
-
+```bash
+cd ~/Code/applypilot && python3 run_apply.py [--provider PROVIDER] [--workers N]
 ```
-LLM_URL=https://opencode.ai/zen/go/v1
-LLM_API_KEY=your_key
-LLM_MODEL=deepseek-v4-flash
+
+Starts the continuous apply loop. Picks the highest-scored unprocessed job from the queue, launches a Hermes AI agent to fill and submit the application, then repeats. Polls every 5s for new jobs. Ctrl+C once to skip current job, twice to stop.
+
+**`--workers N`** — Number of parallel Chrome/Hermes agents (default: 1).
+  With more workers, multiple jobs are processed simultaneously. Each worker
+  gets its own Chrome instance (ports 9515, 9516, ...) and independent Hermes agent.
+  Start with 1, bump to 2-3 if you have the CPU/Chrome overhead.
+
+**`--provider PROVIDER`** — Which model backend to use for the apply agent:
+
+| Provider | Default Model | Backend | Key | Cost |
+|----------|-------------|---------|-----|------|
+| `opencode` | deepseek-v4-flash-free | Zen (free tier) | `OPENCODE_API_KEY` | free |
+| `opencode-zen` | deepseek-v4-flash-free | Zen (free or prepaid) | `OPENCODE_API_KEY` | free / varies |
+| `opencode-go` | deepseek-v4-flash | Zen Go subscription | `OPENCODE_API_KEY` | $10/month |
+| `gemini` | gemini-2.5-flash | Google Gemini API | `GEMINI_API_KEY` | free (1500 req/day) |
+| `openrouter` | google/gemma-4-31b-it:free | OpenRouter free tier | `OPENROUTER_API_KEY` | free |
+
+`opencode` and `opencode-zen` use `HERMES_MODE=zen` (free models like `deepseek-v4-flash-free`, `big-pickle`). `opencode-go` uses `HERMES_MODE=go` (subscription, strips `-free` suffix from model name). The same `opencode-go-key` file at `~/Code/hermes/opencode-go-key` works for all — Go is a subscription tier within Zen.
+
+Examples:
+```bash
+# Default — Zen free tier with deepseek-v4-flash-free
+python3 run_apply.py --provider opencode
+
+# Zen with a specific free model
+python3 run_apply.py --provider opencode --model big-pickle
+
+# Go subscription with a Go model
+python3 run_apply.py --provider opencode-go --model deepseek-v4-flash
+
+# Google Gemini — free, fast, 1M context (needs GEMINI_API_KEY)
+python3 run_apply.py --provider gemini
+
+# OpenRouter free models — separate quota from your Google key
+python3 run_apply.py --provider openrouter
+
+# Run 3 parallel workers
+python3 run_apply.py --workers 3
 ```
+
+### Provider setup
+
+You need at least one API key. The apply loop auto-detects which keys are set:
+
+**OpenCode Zen/Go** — deepseek-v4-flash-free / deepseek-v4-flash
+  Zen (free/prepaid) and Go (subscription) share the same API key from
+  `~/Code/hermes/opencode-go-key`. Set it in `~/.applypilot/.env`:
+
+  ```
+  OPENCODE_API_KEY=sk-...
+  ```
+
+  - `--provider opencode` → Zen mode, free models (`deepseek-v4-flash-free`, `big-pickle`, etc.)
+  - `--provider opencode-zen` → same as opencode (Zen mode)
+  - `--provider opencode-go` → Go subscription mode, paid models
+  - **Zen free**: no cost, no balance — `deepseek-v4-flash-free`, `big-pickle`, `mimo-v2.5-free`, `nemotron-3-super-free`
+  - **Zen paid**: add $20 balance, pay per token. https://opencode.ai/zen
+  - **Go**: $10/month subscription (~31,650 DeepSeek V4 Flash req/5h). https://opencode.ai/go
+
+  Override the model with `--model`:
+  ```bash
+  python3 run_apply.py --provider opencode --model big-pickle
+  python3 run_apply.py --provider opencode --model nemotron-3-super-free
+  python3 run_apply.py --provider opencode-go --model kimi-k2.5
+  ```
+
+**Google Gemini** — gemini-2.5-flash (free tier)
+  ```
+  GEMINI_API_KEY=AIza...
+  ```
+  Free tier: 1500 requests/day, 1M context. Resets at midnight PT.
+  If rate-limited, switch model or use OpenRouter's Gemini route instead.
+
+**OpenRouter** — free models
+  ```
+  OPENROUTER_API_KEY=sk-or-v1-...
+  ```
+  Free models include google/gemma-4-31b-it:free, nvidia/nemotron-3-super-120b-a12b:free,
+  google/gemini-2.0-flash-exp:free, and others. Separate quota from direct Google API.
+
+**Explicit provider selection** — set `LLM_PROVIDER` to override auto-detect:
+  ```bash
+  LLM_PROVIDER=gemini python3 run_apply.py --workers 2
+  # or using the flag:
+  python3 run_apply.py --provider openrouter --workers 1
+  ```
+
+### Discover new jobs
+
+```bash
+bash ~/Code/applypilot/run-ap.sh run discover
+```
+Scrapes Indeed, LinkedIn, and 48+ corporate Workday career sites for new job listings. Jobs from Indeed that have a direct URL to the company's own ATS (Workday, Greenhouse, Lever, etc.) get stored with the company name as the apply destination — not "indeed" — so they bypass Indeed's bot blocking.
+
+### Score jobs by fit
+
+```bash
+bash ~/Code/applypilot/run-ap.sh run score
+```
+Runs an LLM evaluator against every unscored job that has a full description. Assigns a fit score (1-10) comparing your resume to the job description. The apply pipeline picks highest scores first automatically.
+
+```bash
+bash ~/Code/applypilot/run-ap.sh run score --rescore
+```
+Re-scores all jobs, not just unscored ones. Use if you updated your resume.
+
+### Enrich job descriptions
+
+```bash
+bash ~/Code/applypilot/run-ap.sh run enrich
+```
+Navigates to each job URL with a browser and scrapes the full description and direct apply URL. Required before scoring can work on most jobs.
+
+### Run everything end-to-end
+
+```bash
+bash ~/Code/applypilot/run-ap.sh run all
+```
+Runs discover → enrich → score → tailor → cover → pdf in sequence.
+
+### Check status
+
+```bash
+bash ~/Code/applypilot/run-ap.sh status
+```
+Shows a dashboard of total jobs, how many are scored, how many have descriptions, how many applied, and score distribution.
+
+## Monitoring
+
+```bash
+# Live worker log
+tail -f ~/.applypilot/logs/worker-0.log
+
+# Per-job agent transcripts
+ls ~/.applypilot/logs/claude_*.txt
+```
+
+## Database quick commands
+
+```bash
+# Apply stats
+python3 -c "
+import sqlite3; c = sqlite3.connect('$HOME/.applypilot/applypilot.db')
+for r in c.execute('SELECT apply_status, COUNT(*) FROM jobs GROUP BY apply_status'): print(f'{r[0]}: {r[1]}')
+"
+
+# Reset all non-applied jobs for retry
+python3 -c "
+import sqlite3; c = sqlite3.connect('$HOME/.applypilot/applypilot.db')
+c.execute('UPDATE jobs SET apply_status = NULL, apply_error = NULL, apply_attempts = 0, agent_id = NULL WHERE apply_status IS NOT NULL AND apply_status != \"applied\"')
+c.commit(); print(f'Reset {c.rowcount} jobs')
+"
+```
+
+## Configuration files
+
+- **Search queries**: `~/.applypilot/searches.yaml` — add/remove job titles and locations
+- **Blocked sites**: `~/.applypilot/applypilot/config/sites.yaml` — sites the apply pipeline skips
+- **Resume**: `~/.applypilot/resume.txt` — updated this, regenerate PDF via `run pdf`

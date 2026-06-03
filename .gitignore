@@ -9,3 +9,6 @@ Logs/
 backups/
 .DS_Store
 *.log
+*_key
+*.bak
+.venv

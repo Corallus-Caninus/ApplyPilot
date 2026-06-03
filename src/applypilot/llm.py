@@ -1,10 +1,19 @@
 """
 Unified LLM client for ApplyPilot.
 
-Auto-detects provider from environment:
-  GEMINI_API_KEY  -> Google Gemini (default: gemini-2.0-flash)
-  OPENAI_API_KEY  -> OpenAI (default: gpt-4o-mini)
-  LLM_URL         -> Local llama.cpp / Ollama compatible endpoint
+Provider auto-detection priority:
+  OPENROUTER_API_KEY  -> OpenRouter (default: nvidia/nemotron-3-super-120b-a12b:free)
+  OPENCODE_API_KEY    -> OpenCode Zen/Go (default: deepseek-v4-flash)
+  GEMINI_API_KEY      -> Google Gemini (default: gemini-2.5-flash)
+  OPENAI_API_KEY      -> OpenAI (default: gpt-4o-mini)
+  LLM_URL             -> Local llama.cpp / Ollama compatible endpoint
+
+Override auto-detection explicitly with LLM_PROVIDER env var:
+  export LLM_PROVIDER=opencode   (requires OPENCODE_API_KEY)
+  export LLM_PROVIDER=openrouter (requires OPENROUTER_API_KEY)
+  export LLM_PROVIDER=gemini     (requires GEMINI_API_KEY)
+  export LLM_PROVIDER=openai     (requires OPENAI_API_KEY)
+  export LLM_PROVIDER=local      (requires LLM_URL)
 
 LLM_MODEL env var overrides the model name for any provider.
 """
@@ -18,6 +27,22 @@ import httpx
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Provider constants
+# ---------------------------------------------------------------------------
+
+_PROVIDERS = {
+    "gemini":        "Google Gemini",
+    "openrouter":    "OpenRouter (free models)",
+    "openai":        "OpenAI",
+    "opencode":      "OpenCode Zen/Go (uses OPENCODE_API_KEY)",
+    "opencode-zen":  "OpenCode Zen prepaid (uses OPENCODE_ZEN_API_KEY)",
+    "opencode-go":   "OpenCode Go subscription (uses OPENCODE_GO_API_KEY)",
+    "local":         "Local endpoint",
+}
+
+_OPENROUTER_DEFAULT_BASE = "https://openrouter.ai/api/v1"
+
+# ---------------------------------------------------------------------------
 # Provider detection
 # ---------------------------------------------------------------------------
 
@@ -26,16 +51,116 @@ def _detect_provider() -> tuple[str, str, str]:
 
     Reads env at call time (not module import time) so that load_env() called
     in _bootstrap() is always visible here.
+
+    LLM_PROVIDER can be set to explicitly select a provider:
+      gemini, openrouter, openai, local
     """
+    provider_override = os.environ.get("LLM_PROVIDER", "").lower().strip()
+    model_override = os.environ.get("LLM_MODEL", "")
+
+    # ── Explicit provider selection ──────────────────────────────────────────
+    if provider_override == "gemini":
+        key = os.environ.get("GEMINI_API_KEY", "")
+        if not key:
+            raise RuntimeError("LLM_PROVIDER=gemini but GEMINI_API_KEY is not set.")
+        return (
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            model_override or "gemini-2.5-flash",
+            key,
+        )
+
+    if provider_override == "openrouter":
+        key = os.environ.get("OPENROUTER_API_KEY", "")
+        base = os.environ.get("OPENROUTER_BASE_URL", _OPENROUTER_DEFAULT_BASE).rstrip("/")
+        if not key:
+            raise RuntimeError("LLM_PROVIDER=openrouter but OPENROUTER_API_KEY is not set.")
+        return (
+            base,
+            model_override or "nvidia/nemotron-3-super-120b-a12b:free",
+            key,
+        )
+
+    if provider_override == "opencode":
+        key = os.environ.get("OPENCODE_API_KEY", "")
+        if not key:
+            raise RuntimeError("LLM_PROVIDER=opencode but OPENCODE_API_KEY is not set.")
+        return (
+            "https://opencode.ai/zen/v1",
+            model_override or "deepseek-v4-flash",
+            key,
+        )
+
+    if provider_override == "opencode-zen":
+        key = os.environ.get("OPENCODE_ZEN_API_KEY", "") or os.environ.get("OPENCODE_API_KEY", "")
+        if not key:
+            raise RuntimeError("LLM_PROVIDER=opencode-zen but OPENCODE_ZEN_API_KEY is not set.")
+        return (
+            "https://opencode.ai/zen/v1",
+            model_override or "deepseek-v4-flash",
+            key,
+        )
+
+    if provider_override == "opencode-go":
+        key = os.environ.get("OPENCODE_GO_API_KEY", "") or os.environ.get("OPENCODE_API_KEY", "")
+        if not key:
+            raise RuntimeError("LLM_PROVIDER=opencode-go but OPENCODE_GO_API_KEY is not set.")
+        return (
+            "https://opencode.ai/zen/go/v1",
+            model_override or "deepseek-v4-flash",
+            key,
+        )
+
+    if provider_override == "openai":
+        key = os.environ.get("OPENAI_API_KEY", "")
+        if not key:
+            raise RuntimeError("LLM_PROVIDER=openai but OPENAI_API_KEY is not set.")
+        return (
+            "https://api.openai.com/v1",
+            model_override or "gpt-4o-mini",
+            key,
+        )
+
+    if provider_override == "local":
+        url = os.environ.get("LLM_URL", "")
+        if not url:
+            raise RuntimeError("LLM_PROVIDER=local but LLM_URL is not set.")
+        return (
+            url.rstrip("/"),
+            model_override or "local-model",
+            os.environ.get("LLM_API_KEY", ""),
+        )
+
+    if provider_override:
+        raise RuntimeError(
+            f"Unknown LLM_PROVIDER '{provider_override}'. "
+            f"Valid values: {', '.join(_PROVIDERS)}"
+        )
+
+    # ── Auto-detect ──────────────────────────────────────────────────────────
+    or_key = os.environ.get("OPENROUTER_API_KEY", "")
+    oc_key = os.environ.get("OPENCODE_API_KEY", "")
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     openai_key = os.environ.get("OPENAI_API_KEY", "")
     local_url = os.environ.get("LLM_URL", "")
-    model_override = os.environ.get("LLM_MODEL", "")
+
+    if or_key and not local_url:
+        return (
+            os.environ.get("OPENROUTER_BASE_URL", _OPENROUTER_DEFAULT_BASE).rstrip("/"),
+            model_override or "nvidia/nemotron-3-super-120b-a12b:free",
+            or_key,
+        )
+
+    if oc_key and not local_url:
+        return (
+            "https://opencode.ai/zen/v1",
+            model_override or "deepseek-v4-flash",
+            oc_key,
+        )
 
     if gemini_key and not local_url:
         return (
             "https://generativelanguage.googleapis.com/v1beta/openai",
-            model_override or "gemini-2.0-flash",
+            model_override or "gemini-2.5-flash",
             gemini_key,
         )
 
@@ -55,7 +180,8 @@ def _detect_provider() -> tuple[str, str, str]:
 
     raise RuntimeError(
         "No LLM provider configured. "
-        "Set GEMINI_API_KEY, OPENAI_API_KEY, or LLM_URL in your environment."
+        "Set LLM_PROVIDER explicitly or set one of: "
+        "OPENROUTER_API_KEY, OPENCODE_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, LLM_URL"
     )
 
 

@@ -39,6 +39,166 @@ from applypilot.apply.dashboard import (
 
 logger = logging.getLogger(__name__)
 
+# ── Provider fallback chain ─────────────────────────────────────────────────────
+# Patterns in Hermes/LLM output that indicate a provider error (rate-limit,
+# outage, auth failure, model unavailable, etc.) — triggers fallback to next
+# provider in the chain.
+PROVIDER_ERROR_PATTERNS = [
+    "rate limit", "rate_limit", "ratelimit",
+    "429", "503", "502", "500",
+    "too many requests",
+    "overloaded",
+    "try again later",
+    "quota exceeded",
+    "please slow down",
+    "retry after",
+    "retry-after",
+    "no response",
+    "connection refused",
+    "connection reset",
+    "timeout",
+    "timed out",
+    "upstream error",
+    "internal server error",
+    "bad gateway",
+    "service unavailable",
+    "model is not supported",
+    "model not found",
+    "not supported",
+    "invalid_api_key",
+    "authentication_error",
+    "provider_error",
+    "api_error",
+    "server_error",
+    "capacity",
+    "currently unavailable",
+    "try again",
+    "temporarily unavailable",
+    "no available provider",
+    "all providers failed",
+    "error code: 40",
+    "error code: 50",
+    "non-retryable",
+]
+
+
+def detect_provider_error(output: str) -> bool:
+    """Check if Hermes output indicates a provider/model error that should trigger fallback."""
+    if not output:
+        return True  # empty output = something went wrong
+    lower = output.lower()
+    return any(p in lower for p in PROVIDER_ERROR_PATTERNS)
+
+
+def _build_provider_cmd(hermes_path: str, provider: str, model: str,
+                        agent_prompt: str) -> tuple[list[str], dict]:
+    """Build Hermes CLI command + environment for a specific provider/model."""
+    cmd = [hermes_path, "chat", "-v"]
+    env = os.environ.copy()
+    env.pop("CLAUDECODE", None)
+    env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+
+    if provider:
+        env["LLM_PROVIDER"] = provider
+
+    if provider == "opencode" or provider == "opencode-zen":
+        cmd += ["-m", model or "deepseek-v4-flash-free"]
+        env["HERMES_MODE"] = "zen"
+    elif provider == "opencode-go":
+        cmd += ["-m", model or "deepseek-v4-flash"]
+        env["HERMES_MODE"] = "go"
+    elif provider == "openrouter":
+        cmd += ["--provider", "openrouter"]
+        cmd += ["-m", model or "openrouter/owl-alpha"]
+    else:
+        if provider:
+            cmd += ["--provider", provider]
+        if model:
+            cmd += ["-m", model]
+
+    cmd += ["-q", agent_prompt]
+    if model:
+        env["LLM_MODEL"] = model
+
+    return cmd, env
+
+
+def _probe_provider(provider: str, model: str) -> bool:
+    """Quickly check if a provider/model is available by making a minimal API call.
+    
+    Returns True if the provider responds, False otherwise.
+    """
+    import urllib.request
+    import urllib.error
+
+    try:
+        if provider == "openrouter":
+            # OpenRouter's model list endpoint requires no auth for basic probing
+            req = urllib.request.Request(
+                "https://openrouter.ai/api/v1/models",
+                headers={"User-Agent": "hermes-agent-probe/1.0"},
+            )
+            resp = urllib.request.urlopen(req, timeout=10)
+            return resp.status == 200
+        elif provider in ("opencode", "opencode-zen", "opencode-go"):
+            # OpenCode — hit the models endpoint with the API key
+            key_path = os.path.expanduser("~/Code/hermes/opencode-go-key")
+            if os.path.isfile(key_path):
+                key = open(key_path).read().strip()
+                base = "https://opencode.ai/zen/go/v1" if provider == "opencode-go" else "https://opencode.ai/zen/v1"
+                req = urllib.request.Request(
+                    f"{base}/models",
+                    headers={"Authorization": f"Bearer {key}"},
+                )
+                resp = urllib.request.urlopen(req, timeout=10)
+                return resp.status == 200
+            return False
+        else:
+            return False
+    except Exception:
+        return False
+
+
+# ── Mid-job provider switch ────────────────────────────────────────────────────
+
+def _mid_job_switch_prober(proc, chain: list, current_idx: int,
+                           switch_file: str,
+                           worker_id: int = 0) -> None:
+    """Background daemon: probes higher-priority providers every 30s during a job.
+    
+    If a higher-priority provider recovers, writes a switch request to the
+    Hermes switch file. Hermes picks it up before the next API call and
+    seamlessly swaps model/provider/base_url mid-conversation.
+    """
+    import json
+    
+    if current_idx == 0:
+        return  # already on the highest-priority provider, nothing to switch to
+    
+    while proc and proc.poll() is None:
+        # Wait 30s between probes
+        import time as _time
+        _time.sleep(30)
+        
+        if proc.poll() is not None:
+            return  # process already exited
+        
+        # Check each higher-priority provider (lower index = higher priority)
+        for idx in range(current_idx):
+            prov, model = chain[idx]
+            if _probe_provider(prov, model):
+                payload = json.dumps({
+                    "provider": prov,
+                    "model": model,
+                })
+                try:
+                    with open(switch_file, "w") as f:
+                        f.write(payload)
+                    add_event(f"[W{worker_id}] {prov}/{model} recovered — queued seamless switch")
+                except OSError as e:
+                    add_event(f"[W{worker_id}] Failed to write switch file: {e}")
+                return
+
 # Blocked sites loaded from config/sites.yaml
 def _load_blocked():
     from applypilot.config import load_blocked_sites
@@ -311,14 +471,23 @@ def reset_failed() -> int:
 # ---------------------------------------------------------------------------
 
 def run_job(job: dict, port: int, worker_id: int = 0,
-            model: str = "sonnet", dry_run: bool = False) -> tuple[str, int]:
-    """Spawn a Claude Code session for one job application.
+            provider_chain: list | None = None,
+            dry_run: bool = False) -> tuple[str, int]:
+    """Try providers in priority order until one succeeds or all fail.
+
+    provider_chain: list of (provider_name, model_name) tuples, highest priority first.
+        Each provider is tried; if it errors (rate-limit, 401, 5xx, timeout, etc.)
+        the next provider is attempted. After success, higher-priority providers
+        are probed for the next job.
 
     Returns:
         Tuple of (status_string, duration_ms). Status is one of:
         'applied', 'expired', 'captcha', 'login_issue',
-        'failed:reason', or 'skipped'.
+        'failed:reason', 'failed:all_providers_exhausted', or 'skipped'.
     """
+    if not provider_chain:
+        provider_chain = [("", "")]
+
     # Read tailored resume text
     resume_path = job.get("tailored_resume_path")
     txt_path = Path(resume_path).with_suffix(".txt") if resume_path else None
@@ -333,33 +502,19 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         dry_run=dry_run,
     )
 
-    # Write per-worker MCP config (needed for Playwright MCP if using claude)
+    # Write per-worker MCP config
     mcp_config_path = config.APP_DIR / f".mcp-apply-{worker_id}.json"
     mcp_config_path.write_text(json.dumps(_make_mcp_config(port)), encoding="utf-8")
 
-    # Use our Hermes agent instead of Claude Code
     hermes_path = os.path.expanduser("~/Code/hermes/fully_automatic_holographic")
     if not os.path.exists(hermes_path):
         return "failed:hermes_not_found", 0
-
-    cmd = [
-        hermes_path,
-        "chat",
-        "-v",
-        "-q",
-        agent_prompt,
-    ]
-
-    env = os.environ.copy()
-    env.pop("CLAUDECODE", None)
-    env.pop("CLAUDE_CODE_ENTRYPOINT", None)
 
     worker_dir = reset_worker_dir(worker_id)
 
     update_state(worker_id, status="applying", job_title=job['title'],
                  company=job.get("site", ""), score=job.get("fit_score", 0),
                  start_time=time.time(), actions=0, last_action="starting")
-    add_event(f"[W{worker_id}] Starting: {job['title'][:40]} @ {job.get('site', '')}")
 
     worker_log = config.LOG_DIR / f"worker-{worker_id}.log"
     ts_header = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -371,138 +526,187 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         f"{'=' * 60}\n"
     )
 
-    start = time.time()
-    proc = None
+    overall_start = time.time()
+    chain_len = len(provider_chain)
+    last_provider = ""
+    last_model = ""
 
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=env,
-            cwd=str(worker_dir),
-            start_new_session=True,
-        )
-        with _claude_lock:
-            _claude_procs[worker_id] = proc
+    for chain_idx, (provider, model) in enumerate(provider_chain):
+        last_provider = provider
+        last_model = model
+        label = f"{provider}/{model}" if provider else "default"
+        attempt_label = f" (attempt {chain_idx + 1}/{chain_len})" if chain_len > 1 else ""
 
-        text_parts: list[str] = []
-        stdout_lines: list[str] = []
-        with open(worker_log, "a", encoding="utf-8") as lf:
-            lf.write(log_header)
-
-            # Collect output in a daemon thread so the main thread can enforce a timeout
-            def _reader():
-                for raw_line in proc.stdout:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    stdout_lines.append(line)
-                    lf.write(line + "\n")
-
-            reader_thread = Thread(target=_reader, daemon=True)
-            reader_thread.start()
-
-            # Wait for the process to finish with a real timeout
-            proc.wait(timeout=900)  # 15 min — complex ATS forms need it
-            reader_thread.join(timeout=5)
-            text_parts = stdout_lines
-
-        returncode = proc.returncode
+        add_event(f"[W{worker_id}] Using {label}{attempt_label}")
+        start = time.time()
         proc = None
 
-        if returncode and returncode < 0:
-            return "skipped", int((time.time() - start) * 1000)
+        cmd, env = _build_provider_cmd(hermes_path, provider, model, agent_prompt)
+        env["LLM_PROVIDER"] = provider
 
-        output = "\n".join(text_parts)
-        elapsed = int(time.time() - start)
-        duration_ms = int((time.time() - start) * 1000)
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+                cwd=str(worker_dir),
+                start_new_session=True,
+            )
+            with _claude_lock:
+                _claude_procs[worker_id] = proc
 
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        job_log = config.LOG_DIR / f"claude_{ts}_w{worker_id}_{job.get('site', 'unknown')[:20]}.txt"
-        job_log.write_text(output, encoding="utf-8")
+            # ── Start mid-job prober ────────────────────────────────────────
+            # Checks higher-priority providers every 30s; writes switch file
+            # so Hermes can seamlessly swap provider/model mid-conversation.
+            _switch_file = os.path.expanduser("~/.hermes/apply-provider-switch.json")
+            _prober = Thread(
+                target=_mid_job_switch_prober,
+                args=(proc, provider_chain, chain_idx, _switch_file, worker_id),
+                daemon=True,
+            )
+            _prober.start()
 
-        def _clean_reason(s: str) -> str:
-            return re.sub(r'[*`\"]+$', '', s).strip()
+            stdout_lines: list[str] = []
+            with open(worker_log, "a", encoding="utf-8") as lf:
+                lf.write(log_header)
 
-        # Scan output lines in REVERSE so we find the agent's final ACTUAL
-        # result, not prompt template text containing "RESULT:APPLIED".
-        output_lines = output.split("\n")
-        result_line = None
-        for i in range(len(output_lines) - 1, -1, -1):
-            line = output_lines[i].strip()
-            if "RESULT:APPLIED" in line:
-                result_line = ("applied", "applied")
-                break
-            elif "RESULT:FAILED" in line:
-                reason = (
-                    line.split("RESULT:FAILED:")[-1].strip()
-                    if ":FAILED:" in line
-                    else "unknown"
-                )
-                reason = _clean_reason(reason)
-                result_line = (f"failed:{reason}", reason)
-                break
-            elif "RESULT:EXPIRED" in line:
-                result_line = ("expired", "expired")
-                break
-            elif "RESULT:CAPTCHA" in line:
-                result_line = ("captcha", "captcha")
-                break
-            elif "RESULT:LOGIN_ISSUE" in line:
-                result_line = ("login_issue", "login_issue")
-                break
+                def _reader():
+                    for raw_line in proc.stdout:
+                        line = raw_line.strip()
+                        if not line:
+                            continue
+                        stdout_lines.append(line)
+                        lf.write(line + "\n")
 
-        if result_line:
-            status_key, display_status = result_line
-            if status_key == "applied":
-                add_event(f"[W{worker_id}] APPLIED ({elapsed}s): {job['title'][:30]}")
-                update_state(worker_id, status="applied",
-                             last_action=f"APPLIED ({elapsed}s)")
-                return "applied", duration_ms
-            PROMOTE_TO_STATUS = {"captcha", "expired", "login_issue"}
-            if display_status in PROMOTE_TO_STATUS:
-                add_event(f"[W{worker_id}] {display_status.upper()} ({elapsed}s): {job['title'][:30]}")
-                update_state(worker_id, status=display_status,
-                             last_action=f"{display_status.upper()} ({elapsed}s)")
-                return display_status, duration_ms
-            add_event(f"[W{worker_id}] FAILED ({elapsed}s): {display_status[:30]}")
-            update_state(worker_id, status="failed",
-                         last_action=f"FAILED: {display_status[:25]}")
-            return status_key, duration_ms
+                reader_thread = Thread(target=_reader, daemon=True)
+                reader_thread.start()
 
-        add_event(f"[W{worker_id}] NO RESULT ({elapsed}s)")
-        update_state(worker_id, status="failed", last_action=f"no result ({elapsed}s)")
-        return "failed:no_result_line", duration_ms
+                proc.wait(timeout=900)
+                reader_thread.join(timeout=5)
 
-    except subprocess.TimeoutExpired:
-        duration_ms = int((time.time() - start) * 1000)
-        elapsed = int(time.time() - start)
-        add_event(f"[W{worker_id}] TIMEOUT ({elapsed}s)")
-        update_state(worker_id, status="failed", last_action=f"TIMEOUT ({elapsed}s)")
-        # Kill the entire process group, not just the parent process
-        # Hermes spawns child processes (Playwright MCP server, terminal tools)
-        # that survive a regular kill — use SIGKILL on the group
-        if proc and proc.poll() is None:
-            try:
-                pgid = os.getpgid(proc.pid)
-                os.killpg(pgid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-        return "failed:timeout", duration_ms
-    except Exception as e:
-        duration_ms = int((time.time() - start) * 1000)
-        add_event(f"[W{worker_id}] ERROR: {str(e)[:40]}")
-        update_state(worker_id, status="failed", last_action=f"ERROR: {str(e)[:25]}")
-        return f"failed:{str(e)[:100]}", duration_ms
-    finally:
-        with _claude_lock:
-            _claude_procs.pop(worker_id, None)
-        if proc is not None and proc.poll() is None:
-            _kill_process_tree(proc.pid)
+            returncode = proc.returncode
+            proc = None
+
+            if returncode and returncode < 0:
+                return "skipped", int((time.time() - overall_start) * 1000)
+
+            output = "\n".join(stdout_lines)
+            elapsed = int(time.time() - start)
+            duration_ms = int((time.time() - overall_start) * 1000)
+
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            job_log = config.LOG_DIR / f"claude_{ts}_w{worker_id}_{job.get('site', 'unknown')[:20]}.txt"
+            job_log.write_text(output, encoding="utf-8")
+
+            def _clean_reason(s: str) -> str:
+                return re.sub(r'[*`\\\"]+$', '', s).strip()
+
+            # Scan output lines in REVERSE for agent's final RESULT
+            output_lines = output.split("\n")
+            result_line = None
+            for i in range(len(output_lines) - 1, -1, -1):
+                line = output_lines[i].strip()
+                if "RESULT:APPLIED" in line:
+                    result_line = ("applied", "applied")
+                    break
+                elif "RESULT:FAILED" in line:
+                    reason = (
+                        line.split("RESULT:FAILED:")[-1].strip()
+                        if ":FAILED:" in line
+                        else "unknown"
+                    )
+                    reason = _clean_reason(reason)
+                    result_line = (f"failed:{reason}", reason)
+                    break
+                elif "RESULT:EXPIRED" in line:
+                    result_line = ("expired", "expired")
+                    break
+                elif "RESULT:CAPTCHA" in line:
+                    result_line = ("captcha", "captcha")
+                    break
+                elif "RESULT:LOGIN_ISSUE" in line:
+                    result_line = ("login_issue", "login_issue")
+                    break
+
+            if result_line:
+                status_key, display_status = result_line
+
+                # Check if the result is actually a provider error disguised as RESULT:FAILED
+                if status_key.startswith("failed:") and detect_provider_error(output):
+                    if chain_idx < chain_len - 1:
+                        add_event(f"[W{worker_id}] {label} provider error (fallback #{chain_idx + 2})")
+                        continue  # try next provider
+                    # Last provider — return the original result
+                    add_event(f"[W{worker_id}] {display_status.upper()} ({elapsed}s): {job['title'][:30]}")
+                    update_state(worker_id, status="failed",
+                                 last_action=f"{display_status.upper()} ({elapsed}s)")
+                    return status_key, duration_ms
+
+                if status_key == "applied":
+                    add_event(f"[W{worker_id}] APPLIED via {label} ({elapsed}s): {job['title'][:30]}")
+                    update_state(worker_id, status="applied",
+                                 last_action=f"APPLIED via {label} ({elapsed}s)")
+                    return "applied", duration_ms
+
+                PROMOTE_TO_STATUS = {"captcha", "expired", "login_issue"}
+                if display_status in PROMOTE_TO_STATUS:
+                    add_event(f"[W{worker_id}] {display_status.upper()} ({elapsed}s): {job['title'][:30]}")
+                    update_state(worker_id, status=display_status,
+                                 last_action=f"{display_status.upper()} ({elapsed}s)")
+                    return display_status, duration_ms
+
+                add_event(f"[W{worker_id}] FAILED ({elapsed}s): {display_status[:30]}")
+                update_state(worker_id, status="failed",
+                             last_action=f"FAILED: {display_status[:25]}")
+                return status_key, duration_ms
+
+            # No RESULT line found — check for provider errors
+            if detect_provider_error(output):
+                if chain_idx < chain_len - 1:
+                    add_event(f"[W{worker_id}] {label} no result (provider error, fallback #{chain_idx + 2})")
+                    continue
+                add_event(f"[W{worker_id}] {label} no result (last provider)")
+                update_state(worker_id, status="failed",
+                             last_action=f"no result ({elapsed}s)")
+                return "failed:provider_error", duration_ms
+
+            add_event(f"[W{worker_id}] NO RESULT ({elapsed}s)")
+            update_state(worker_id, status="failed", last_action=f"no result ({elapsed}s)")
+            return "failed:no_result_line", duration_ms
+
+        except subprocess.TimeoutExpired:
+            elapsed = int(time.time() - start)
+            add_event(f"[W{worker_id}] {label} TIMEOUT ({elapsed}s)")
+            update_state(worker_id, status="failed", last_action=f"TIMEOUT ({elapsed}s)")
+            if proc is not None:
+                _kill_process_tree(proc.pid)
+            if chain_idx < chain_len - 1:
+                add_event(f"[W{worker_id}] Timeout may be provider issue — fallback #{chain_idx + 2}")
+                continue
+            return "failed:timeout", int((time.time() - overall_start) * 1000)
+
+        except Exception as e:
+            duration_ms = int((time.time() - overall_start) * 1000)
+            err_msg = str(e)[:100]
+            add_event(f"[W{worker_id}] {label} ERROR: {err_msg[:40]}")
+            update_state(worker_id, status="failed", last_action=f"ERROR: {err_msg[:25]}")
+            if chain_idx < chain_len - 1:
+                add_event(f"[W{worker_id}] Error may be transient — fallback #{chain_idx + 2}")
+                continue
+            return f"failed:{err_msg}", duration_ms
+
+        finally:
+            with _claude_lock:
+                _claude_procs.pop(worker_id, None)
+            if proc is not None and proc.poll() is None:
+                _kill_process_tree(proc.pid)
+
+    # All providers exhausted
+    return "failed:all_providers_exhausted", int((time.time() - overall_start) * 1000)
 
 
 # ---------------------------------------------------------------------------
@@ -539,8 +743,14 @@ def _is_permanent_failure(result: str) -> bool:
 def worker_loop(worker_id: int = 0, limit: int = 1,
                 target_url: str | None = None,
                 min_score: int = 7, headless: bool = False,
-                model: str = "sonnet", dry_run: bool = False) -> tuple[int, int]:
+                model: str = "sonnet", provider: str = "",
+                provider_chain: list | None = None,
+                dry_run: bool = False) -> tuple[int, int]:
     """Run jobs sequentially until limit is reached or queue is empty.
+
+    Uses provider_chain (list of (provider, model) tuples, highest priority first)
+    for automatic fallback. If provider_chain is None, falls back to the legacy
+    single (provider, model).
 
     Args:
         worker_id: Numeric worker identifier.
@@ -548,7 +758,9 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
         target_url: Apply to a specific URL.
         min_score: Minimum fit_score threshold.
         headless: Run Chrome headless.
-        model: Claude model name.
+        model: Model name for the apply agent (legacy, used if no chain).
+        provider: LLM provider override (legacy, used if no chain).
+        provider_chain: List of (provider, model) tuples for fallback.
         dry_run: Don't click Submit.
 
     Returns:
@@ -560,6 +772,14 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
     jobs_done = 0
     empty_polls = 0
     port = BASE_CDP_PORT + worker_id
+
+    # Build the effective provider chain
+    if provider_chain:
+        active_chain = list(provider_chain)
+    elif provider:
+        active_chain = [(provider, model or "")]
+    else:
+        active_chain = [("", "")]
 
     while not _stop_event.is_set():
         if not continuous and jobs_done >= limit:
@@ -593,7 +813,8 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
             add_event(f"[W{worker_id}] Connecting to Chrome on port 9515...")
 
             result, duration_ms = run_job(job, port=port, worker_id=worker_id,
-                                            model=model, dry_run=dry_run)
+                                            provider_chain=active_chain,
+                                            dry_run=dry_run)
 
             if result == "skipped":
                 release_lock(job["url"])
@@ -622,6 +843,20 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                     job.get('fit_score'), reason,
                     f"{duration_ms // 60000}m{duration_ms // 1000 % 60}s" if duration_ms else "",
                 )
+
+            # ── Probe higher-priority providers after each job ──────────────
+            # If a higher-priority provider recovers, move it back to the front
+            # of the chain for the next job.
+            if len(active_chain) > 1 and result == "applied":
+                for probe_idx in range(1, len(active_chain)):
+                    probe_prov, probe_model = active_chain[probe_idx]
+                    # Don't probe last-used since it just worked
+                    if _probe_provider(probe_prov, probe_model):
+                        add_event(f"[W{worker_id}] {probe_prov}/{probe_model} recovered — promoting to top priority")
+                        # Move probed entry to front
+                        entry = active_chain.pop(probe_idx)
+                        active_chain.insert(0, entry)
+                        break
 
         except KeyboardInterrupt:
             release_lock(job["url"])
@@ -653,6 +888,8 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
 
 def main(limit: int = 1, target_url: str | None = None,
          min_score: int = 7, headless: bool = False, model: str = "sonnet",
+         provider: str = "",
+         provider_chain: list | None = None,
          dry_run: bool = False, continuous: bool = False,
          poll_interval: int = 60, workers: int = 1) -> None:
     """Launch the apply pipeline.
@@ -662,7 +899,9 @@ def main(limit: int = 1, target_url: str | None = None,
         target_url: Apply to a specific URL.
         min_score: Minimum fit_score threshold.
         headless: Run Chrome headless.
-        model: Claude model name.
+        model: Model name (legacy, used if no provider_chain).
+        provider: LLM provider override (legacy, used if no provider_chain).
+        provider_chain: List of (provider_name, model_name) tuples for fallback.
         dry_run: Don't click Submit.
         continuous: Run forever, polling for new jobs.
         poll_interval: Seconds between DB polls when queue is empty.
@@ -737,6 +976,8 @@ def main(limit: int = 1, target_url: str | None = None,
                     min_score=min_score,
                     headless=headless,
                     model=model,
+                    provider=provider,
+                    provider_chain=provider_chain,
                     dry_run=dry_run,
                 )
             else:
@@ -760,6 +1001,8 @@ def main(limit: int = 1, target_url: str | None = None,
                             min_score=min_score,
                             headless=headless,
                             model=model,
+                            provider=provider,
+                            provider_chain=provider_chain,
                             dry_run=dry_run,
                         ): i
                         for i in range(workers)

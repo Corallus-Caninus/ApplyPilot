@@ -152,7 +152,11 @@ def apply(
     limit: Optional[int] = typer.Option(None, "--limit", "-l", help="Max applications to submit."),
     workers: int = typer.Option(1, "--workers", "-w", help="Number of parallel browser workers."),
     min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for job selection."),
-    model: str = typer.Option("haiku", "--model", "-m", help="Claude model name."),
+    model: str = typer.Option("haiku", "--model", "-m",
+                              help="Model name for the apply agent (passed via env)."),
+    provider: str = typer.Option(None, "--provider", "-p",
+                                 help="LLM provider: opencode, gemini, openrouter, openai, local. "
+                                      "Overrides LLM_PROVIDER env var / auto-detect."),
     continuous: bool = typer.Option(False, "--continuous", "-c", help="Run forever, polling for new jobs."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview actions without submitting."),
     headless: bool = typer.Option(False, "--headless", help="Run browsers in headless mode."),
@@ -190,6 +194,11 @@ def apply(
         return
 
     # --- Full apply mode ---
+
+    # Set LLM_PROVIDER from --provider flag if given
+    if provider:
+        os.environ["LLM_PROVIDER"] = provider
+        console.print(f"  [dim]Provider override:[/dim] {provider}")
 
     # Check 1: Tier 3 required (Claude Code CLI + Chrome)
     check_tier(3, "auto-apply")
@@ -243,6 +252,7 @@ def apply(
     console.print(f"  Limit:    {'unlimited' if continuous else effective_limit}")
     console.print(f"  Workers:  {workers}")
     console.print(f"  Model:    {model}")
+    console.print(f"  Provider: {os.environ.get('LLM_PROVIDER', 'auto')}")
     console.print(f"  Headless: {headless}")
     console.print(f"  Dry run:  {dry_run}")
     if url:
@@ -255,6 +265,7 @@ def apply(
         min_score=min_score,
         headless=headless,
         model=model,
+        provider=provider or os.environ.get("LLM_PROVIDER", ""),
         dry_run=dry_run,
         continuous=continuous,
         workers=workers,
@@ -385,11 +396,20 @@ def doctor() -> None:
 
     # --- Tier 2 checks ---
     import os
+    has_openrouter = bool(os.environ.get("OPENROUTER_API_KEY"))
+    has_opencode = bool(os.environ.get("OPENCODE_API_KEY"))
     has_gemini = bool(os.environ.get("GEMINI_API_KEY"))
     has_openai = bool(os.environ.get("OPENAI_API_KEY"))
     has_local = bool(os.environ.get("LLM_URL"))
-    if has_gemini:
-        model = os.environ.get("LLM_MODEL", "gemini-2.0-flash")
+    provider_override = os.environ.get("LLM_PROVIDER", "").lower().strip()
+    if has_openrouter or provider_override == "openrouter":
+        model = os.environ.get("LLM_MODEL", "nvidia/nemotron-3-super-120b-a12b:free")
+        results.append(("LLM API key", ok_mark, f"OpenRouter ({model})"))
+    elif has_opencode or provider_override == "opencode":
+        model = os.environ.get("LLM_MODEL", "deepseek-v4-flash")
+        results.append(("LLM API key", ok_mark, f"OpenCode ({model})"))
+    elif has_gemini:
+        model = os.environ.get("LLM_MODEL", "gemini-2.5-flash")
         results.append(("LLM API key", ok_mark, f"Gemini ({model})"))
     elif has_openai:
         model = os.environ.get("LLM_MODEL", "gpt-4o-mini")
@@ -398,7 +418,7 @@ def doctor() -> None:
         results.append(("LLM API key", ok_mark, f"Local: {os.environ.get('LLM_URL')}"))
     else:
         results.append(("LLM API key", fail_mark,
-                        "Set GEMINI_API_KEY in ~/.applypilot/.env (run 'applypilot init')"))
+                        "Set GEMINI_API_KEY or OPENROUTER_API_KEY in ~/.applypilot/.env"))
 
     # --- Tier 3 checks ---
     # Claude Code CLI

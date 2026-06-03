@@ -1,14 +1,32 @@
 #!/usr/bin/env python3
 """ApplyPilot launcher — starts Chrome, applies to jobs, optional workers flag.
-   Usage: python3 run_apply.py [--workers N]"""
+   Usage: python3 run_apply.py [--workers N] [--provider P] [--model M] [--no-fallback]
+
+   Default provider priority chain (auto-fallback on failure):
+     1. OpenRouter  (nvidia/nemotron-3-super-120b-a12b:free) — free, agent-optimized
+     2. OpenCode Zen (deepseek-v4-flash-free)        — free, fallback
+     3. OpenCode Go  (deepseek-v4-flash)             — $10/mo, unlimited fallback
+
+   Use --provider and/or --model to pin to a single provider (no fallback)."""
 import sys, os, subprocess, time, signal
 sys.path.insert(0, os.path.expanduser("~/Code/applypilot/.venv/lib/python3.11/site-packages"))
 
 from applypilot.config import load_env
 load_env()
 
-# Parse --workers flag
+# Default priority chain: highest priority first
+DEFAULT_PROVIDER_CHAIN = [
+    ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
+    ("opencode-zen", "deepseek-v4-flash-free"),
+    ("opencode-go", "deepseek-v4-flash"),
+]
+
+# Parse flags
 workers = 1
+provider = None
+model = None
+no_fallback = False
+
 if "--workers" in sys.argv:
     idx = sys.argv.index("--workers")
     try:
@@ -17,6 +35,25 @@ if "--workers" in sys.argv:
         sys.argv.pop(idx)
     except (IndexError, ValueError):
         pass
+if "--provider" in sys.argv:
+    idx = sys.argv.index("--provider")
+    try:
+        provider = sys.argv[idx + 1]
+        sys.argv.pop(idx + 1)
+        sys.argv.pop(idx)
+    except IndexError:
+        pass
+if "--model" in sys.argv:
+    idx = sys.argv.index("--model")
+    try:
+        model = sys.argv[idx + 1]
+        sys.argv.pop(idx + 1)
+        sys.argv.pop(idx)
+    except IndexError:
+        pass
+if "--no-fallback" in sys.argv:
+    no_fallback = True
+    sys.argv.pop(sys.argv.index("--no-fallback"))
 
 BASE_CDP_PORT = 9515
 CHROME_SCRIPT = os.path.expanduser("~/Code/applypilot/start-chrome.sh")
@@ -46,11 +83,24 @@ atexit.register(_cleanup)
 
 from applypilot.apply.launcher import main
 
+# Build provider chain:
+#   --provider specified → single-entry chain (preserves existing behavior)
+#   --no-fallback       → single-entry chain from --provider/--model or default
+#   otherwise           → full priority chain
+if provider or no_fallback:
+    provider_chain = [(provider or DEFAULT_PROVIDER_CHAIN[0][0],
+                       model or DEFAULT_PROVIDER_CHAIN[0][1])]
+else:
+    provider_chain = list(DEFAULT_PROVIDER_CHAIN)
+    if model:
+        # Override the model on the first entry (highest priority), keep fallbacks
+        provider_chain[0] = (provider_chain[0][0], model)
+
 sys.exit(main(
     min_score=0,
     limit=0,
     workers=workers,
-    model="haiku",
+    provider_chain=provider_chain,
     dry_run=False,
     headless=False,
     continuous=True,
