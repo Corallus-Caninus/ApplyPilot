@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 import typer
@@ -101,6 +102,11 @@ def run(
         False, "--rescore",
         help="Re-score all jobs, not just unscored ones. Use after resume update.",
     ),
+    model: str = typer.Option("", "--model", "-m",
+                              help="Model name for scorer/tailor/cover (e.g. nvidia/nemotron-3-super-120b-a12b:free)."),
+    provider: str = typer.Option(None, "--provider", "-p",
+                                 help="LLM provider: openrouter, opencode, gemini, openai, local. "
+                                      "Overrides LLM_PROVIDER env var / auto-detect."),
 ) -> None:
     """Run pipeline stages: discover, enrich, score, tailor, cover, pdf."""
     _bootstrap()
@@ -132,6 +138,12 @@ def run(
             f"Choose from: {', '.join(valid_modes)}"
         )
         raise typer.Exit(code=1)
+
+    # Apply provider/model overrides for AI stages
+    if provider:
+        os.environ["LLM_PROVIDER"] = provider
+    if model:
+        os.environ["LLM_MODEL"] = model
 
     result = run_pipeline(
         stages=stage_list,
