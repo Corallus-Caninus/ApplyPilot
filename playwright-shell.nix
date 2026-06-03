@@ -14,6 +14,7 @@
 let
   # Libraries needed by Playwright's bundled Chromium headless shell
   playwright-libs = with pkgs; [
+    stdenv.cc.cc.lib  # for numpy / libstdc++
     glib
     gobject-introspection
     nss
