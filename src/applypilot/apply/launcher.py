@@ -745,7 +745,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                 reader_thread = Thread(target=_reader, daemon=True)
                 reader_thread.start()
 
-                proc.wait(timeout=900)
+                proc.wait(timeout=None)
                 reader_thread.join(timeout=5)
 
             returncode = proc.returncode
