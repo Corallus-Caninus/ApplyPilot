@@ -158,12 +158,23 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         env["HERMES_MODE"] = "go"
         env["REASONING_EFFORT"] = "low"
     elif provider == "gemini":
-        # Gemini uses LLM_URL/LLM_API_KEY env vars — not --provider flag
-        env["LLM_URL"] = "https://generativelanguage.googleapis.com/v1beta/openai"
-        env["LLM_API_KEY"] = os.environ.get("GEMINI_API_KEY", "")
-        env["LLM_MODEL"] = model or "gemini-2.5-flash"
+        # Gemini uses a temporary Hermes config with the Google endpoint
+        import tempfile as _tempfile
+        import yaml as _yaml
+        _gemini_tmpdir = _tempfile.mkdtemp(prefix="hermes-gemini-")
+        _gemini_cfg = os.path.join(_gemini_tmpdir, "config.yaml")
+        _gemini_key = os.environ.get("GEMINI_API_KEY", "")
+        with open(_gemini_cfg, "w") as _f:
+            _yaml.dump({
+                "model": {
+                    "provider": "custom",
+                    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+                    "default": model or "gemini-2.5-flash",
+                    "api_key": _gemini_key,
+                }}, _f)
+        env["HERMES_HOME"] = _gemini_tmpdir
+        env.pop("HERMES_MODE", None)
         env["REASONING_EFFORT"] = "low"
-        # Don't pass --provider, use -m for the model name
         cmd += ["-m", model or "gemini-2.5-flash"]
     elif provider == "openrouter":
         cmd += ["--provider", "openrouter"]
