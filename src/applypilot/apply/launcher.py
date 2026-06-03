@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+from typing import Literal
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,7 +43,7 @@ logger = logging.getLogger(__name__)
 # ── Background provider prober ──────────────────────────────────────────────────
 # Polls the highest-priority provider every 30s. When it recovers, we switch back.
 # This runs regardless of whether a job is in progress.
-_prober_available: tuple[str, str] | None = None  # (provider, model) or None if unavailable
+_prober_available: tuple[str, str] | Literal[False] | None = None  # (provider, model) or None if unavailable
 _prober_lock = threading.Lock()
 _PROBER_INTERVAL = 30
 
@@ -50,23 +51,31 @@ def _prober_thread_fn(chain: list) -> None:
     """Background thread: probes highest-priority provider every 30s."""
     global _prober_available
     import time as _time
+    # Initial probe immediately, then every 30s after that
     while True:
+        if chain:
+            prov, model = chain[0]
+            ok = _probe_provider(prov, model)
+            with _prober_lock:
+                _prober_available = (prov, model) if ok else False
         _time.sleep(_PROBER_INTERVAL)
-        if not chain:
-            continue
-        # Only probe the highest-priority provider (index 0)
-        prov, model = chain[0]
-        ok = _probe_provider(prov, model)
-        with _prober_lock:
-            _prober_available = (prov, model) if ok else None
 
 def _start_prober(chain: list) -> None:
     """Start the background prober daemon thread."""
+    global _prober_available
+    # Mark as "not yet probed" — chain loop will try normally until first probe
+    _prober_available = None
     t = threading.Thread(target=_prober_thread_fn, args=(chain,), daemon=True)
     t.start()
 
-def _get_best_available() -> tuple[str, str] | None:
-    """Get the highest-priority provider that's currently available, or None."""
+def _get_best_available():
+    """Get the highest-priority provider that's currently available.
+    
+    Returns:
+        (provider, model) if available,
+        False if probed and unavailable,
+        None if not yet probed (first 30s).
+    """
     with _prober_lock:
         return _prober_available
 
@@ -581,12 +590,15 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     last_model = ""
 
     for chain_idx, (provider, model) in enumerate(provider_chain):
-        # Check if the background prober says a higher-priority provider is available.
-        # If we're not on the highest priority and the prober says it's back, skip
-        # ahead to use it instead of trying the current fallback.
+        # Use the background prober's latest result to decide which provider to use.
+        # The prober tests the highest-priority provider every 30s.
         best = _get_best_available()
-        if best and chain_idx > 0 and provider_chain[0] == best:
-            # Prober says highest-priority provider recovered — jump to it
+        if best is False and chain_idx == 0 and chain_len > 1:
+            # Prober says highest-priority provider is down — skip it
+            add_event(f"[W{worker_id}] {provider}/{model} unavailable (probed) — skipping")
+            continue
+        elif best and best is not False and chain_idx > 0:
+            # Prober says a higher-priority provider recovered — jump to it
             provider, model = best
             chain_idx = 0
             add_event(f"[W{worker_id}] Prober detected recovery — switching to {provider}/{model}")
