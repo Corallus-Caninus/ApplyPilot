@@ -654,8 +654,9 @@ If a browser tool call fails because of a dialog ("Leave site?", alert, confirm,
        After creating an account, Workday and many ATS send a verification email.
        If the page shows "Check your email", "Verify your email", "Confirmation sent", or similar:
        1. Wait 10 seconds for the email to arrive
-       2. Run via terminal: python3 ~/.applypilot/email_verifier.py search "from:(the domain) subject:(verify OR confirm OR welcome OR activate)"
-       3. If results found, read the email: python3 ~/.applypilot/email_verifier.py extract-link <id>
+       2. Run via terminal: python3 ~/.applypilot/email_verifier.py search "subject:(verify OR confirm OR welcome OR activate)"
+       3. If results found, get the link:
+          python3 ~/.applypilot/email_verifier.py extract-link <msg_id>
        4. Use mcp_playwright_browser_navigate to go to that confirmation link
        5. Wait for the "email confirmed" / "account verified" page
        6. Navigate back to the original job URL and sign in with the credentials you just created
