@@ -631,39 +631,59 @@ If a browser tool call fails because of a dialog ("Leave site?", alert, confirm,
       If credentials exist, use those credentials instead of the profile default.
       If credentials exist and login fails, try password reset (see 5h below).
 
-      - **Sign In form** (has "Sign In" heading, email + password fields, "Sign In" / "Submit" button) -> try signing in with email: {personal['email']} and password: {personal.get('password', '')}
-      - **Create Account / Register form** (has "Create Account" heading, email + password fields, consent checkbox, "Create Account" / "Submit" button) -> fill in: email = {personal['email']}, password = "{personal.get('password', '')}", check the consent/checkbox, click Submit/Create Account. Do NOT look for a verifyPassword field — if it's not on the page, skip it.
-      - If you see **"Don't have an account yet? Create Account"** link -> you are on the sign-in page. Before giving up on sign-in, click the "Create Account" button/link to go to the registration form.
-      - If you see **"Already have an account? Sign In"** link -> you are on the create-account page. Before filling, click "Sign In" to switch to the login form.
+      DECISION TREE (follow strictly, no looping):
+      
+      A) **Sign In form** (has "Sign In" heading, email + password fields, "Sign In" button):
+         - If you have NOT yet created an account: click "Create Account" / "Don't have an account?" link -> go to B
+         - If you HAVE created an account earlier in this session but haven't verified email: go to step 5e first
+         - Otherwise: try signing in with email and password from saved credentials or profile
+      
+      B) **Create Account / Register form** (has "Create Account" heading, email + password fields):
+         Fill in: email = {personal['email']}, password = "{personal.get('password', '')}", 
+         check the consent/checkbox, click Submit/Create Account.
+         Do NOT look for a verifyPassword field — if it's not on the page, skip it.
+         AFTER SUBMITTING: go directly to step 5e (email verification). Do NOT try to sign in yet.
+      
+      C) **Already have an account? Sign In** link visible on create-account page:
+         Click it, then follow A.
+      
+      D) **Don't have an account yet? Create Account** link visible on sign-in page:
+         Click it, then follow B.
    5d. After clicking Login/Sign In/Create Account: wait for navigation, then mcp_playwright_browser_snapshot. Check for CAPTCHAs.
-   5e. **Email verification**: After creating an account, the site may send a verification email. If the page shows "Check your email", "Verify your email", "Confirmation sent", or similar:
-      1. Wait 10 seconds for the email to arrive
-      2. Run via terminal: python3 ~/.applypilot/email_verifier.py search "from:(the domain) subject:(verify OR confirm OR welcome OR activate)"
-      3. If results found, read the email: python3 ~/.applypilot/email_verifier.py extract-link <id>
-      4. Use mcp_playwright_browser_navigate to go to that confirmation link
-      5. Wait for the "email confirmed" / "account verified" page
-      6. Navigate back to the original job URL and sign in with the credentials you just created
+   5e. **Email verification** (CRITICAL — do NOT skip this):
+       After creating an account, Workday and many ATS send a verification email.
+       If the page shows "Check your email", "Verify your email", "Confirmation sent", or similar:
+       1. Wait 10 seconds for the email to arrive
+       2. Run via terminal: python3 ~/.applypilot/email_verifier.py search "from:(the domain) subject:(verify OR confirm OR welcome OR activate)"
+       3. If results found, read the email: python3 ~/.applypilot/email_verifier.py extract-link <id>
+       4. Use mcp_playwright_browser_navigate to go to that confirmation link
+       5. Wait for the "email confirmed" / "account verified" page
+       6. Navigate back to the original job URL and sign in with the credentials you just created
+       If no verification email appears and the page just shows the job again, you may already be signed in.
+       Try clicking Apply again. If the form/application page loads, skip to step 6.
    5f. **Save credentials after successful account creation**:
-      After successfully creating an account (email verified, signed in, or past the login wall),
-      run this terminal command to save the credentials for future use:
-        python3 ~/.applypilot/credentials_manager.py save {job.get('site', 'unknown')} {personal['email']} "{personal.get('password', '')}"
-      This ensures the next time the pipeline encounters this site, it can sign in directly
-      without creating another account.
-   5g. Sign in succeeded? Continue to step 6. Sign in failed or page didn't change? Try the other flow (Create Account if you tried Sign In, or vice versa).
-   5h. **Password recovery** (if all login/create-account attempts fail):
-      If sign-in and create-account both failed, try the password reset flow:
-      1. Look for a "Forgot password?" / "Reset password" / "Trouble signing in?" link -> click it
-      2. Enter the email: {personal['email']}
-      3. Wait 15 seconds for the reset email to arrive
-      4. Check email for reset links:
-         python3 ~/.applypilot/email_verifier.py search "subject:(reset OR password OR forgot)"
-      5. If a reset email is found, extract the link:
-         python3 ~/.applypilot/email_verifier.py extract-link <msg_id>
-      6. Navigate to that link and set a new password
-      7. After resetting, update the saved credentials:
-         python3 ~/.applypilot/credentials_manager.py update-password {job.get('site', 'unknown')} "<new_password>"
-      8. Navigate back to the job URL and sign in with the new password
-   5i. All failed? Output RESULT:FAILED:login_issue. Do not loop.
+       After successfully creating an account (email verified, signed in, or past the login wall),
+       run this terminal command to save the credentials for future use:
+         python3 ~/.applypilot/credentials_manager.py save {job.get('site', 'unknown')} {personal['email']} "{personal.get('password', '')}"
+       This ensures the next time the pipeline encounters this site, it can sign in directly
+       without creating another account.
+   5g. Sign in succeeded? Continue to step 6. Sign in failed or page didn't change?
+       - First attempt: try the other flow (Create Account if you tried Sign In, or vice versa)
+       - Second attempt: try password recovery (step 5h)
+       - Never try the same approach more than twice
+   5h. **Password recovery** (try once, then move on):
+       If sign-in and create-account both failed:
+       1. Look for a "Forgot password?" / "Reset password" link -> click it
+       2. Enter the email: {personal['email']}
+       3. Wait 15 seconds for the reset email to arrive
+       4. Check email for reset links:
+          python3 ~/.applypilot/email_verifier.py search "subject:(reset OR password OR forgot)"
+       5. If found, extract and navigate to the link, set new password
+       6. Save updated credentials:
+          python3 ~/.applypilot/credentials_manager.py update-password {job.get('site', 'unknown')} "<new_password>"
+       7. Navigate back to the job URL and sign in with the new password
+   5i. If sign-in still fails after password recovery: move on. The site requires SSO or has a broken login flow.
+       Output RESULT:FAILED:login_issue. Do NOT loop back to create-account — it will fail the same way.
 6. Upload resume. Use mcp_playwright_browser_file_upload to set the resume file.
    File path: {pdf_path}
    The file input selector from snapshot has a target like "e123". Use mcp_playwright_browser_file_upload with paths=["{pdf_path}"].
