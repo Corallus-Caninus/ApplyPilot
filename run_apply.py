@@ -3,18 +3,25 @@
    Usage: python3 run_apply.py [--workers N] [--provider P] [--model M] [--no-fallback]
 
    Default provider priority chain (auto-fallback on failure):
-     1. OpenRouter  (nousresearch/hermes-3-llama-3.1-405b:free) — 405B dense, best agentic
-     2. OpenRouter  (qwen/qwen3-coder:free)                 — 35B active MoE, excellent tool use, 1M ctx
-     3. OpenRouter  (meta-llama/llama-3.3-70b-instruct:free) — 70B dense, strong
-     4. OpenRouter  (nvidia/nemotron-3-super-120b-a12b:free) — 12B active MoE, agentic-optimized
-     5. OpenRouter  (moonshotai/kimi-k2.6:free)           — MoE, strong long-context
-     6. OpenRouter  (google/gemma-4-31b-it:free)        — 31B dense, good (rate-limited)
-     7. OpenRouter  (openai/gpt-oss-120b:free)          — 120B dense (was down)
-     8. OpenRouter  (z-ai/glm-4.5-air:free)             — compact MoE fallback
+     1. OpenCode Zen (nemotron-3-super-free)              — 12B active MoE, via Zen (no 429 caps)
+     2. OpenRouter  (z-ai/glm-4.5-air:free)             — compact MoE fallback
+     3. OpenRouter  (nousresearch/hermes-3-llama-3.1-405b:free) — 405B dense, best agentic
+     4. OpenRouter  (qwen/qwen3-coder:free)                 — 35B active MoE, excellent tool use, 1M ctx
+     5. OpenRouter  (meta-llama/llama-3.3-70b-instruct:free) — 70B dense, strong
+     6. OpenRouter  (moonshotai/kimi-k2.6:free)           — MoE, strong long-context
+     7. OpenRouter  (google/gemma-4-31b-it:free)        — 31B dense, good (rate-limited)
+     8. OpenRouter  (openai/gpt-oss-120b:free)          — 120B dense (was down)
+     9. OpenRouter  (nvidia/nemotron-3-super-120b-a12b:free) — fallback via OpenRouter
      # 9. opencode-go (deepseek-v4-flash) — commented to save tokens
 
-   Use --provider and/or --model to pin to a single provider (no fallback)."""
+   Use --provider and/or --model to pin to a single provider (no fallback).
+
+   Session preservation: on provider error (429, timeout, etc.), the session
+   is preserved and retried with the next model in the chain. Once all models
+   are exhausted, it wraps around to the first and keeps trying until the
+   model itself makes a decision (applied, failed:*, expired, captcha, etc.)."""
 import sys, os, subprocess, time, signal
+sys.path.insert(0, os.path.expanduser("~/Code/ApplyPilot/src"))
 sys.path.insert(0, os.path.expanduser("~/Code/applypilot/.venv/lib/python3.11/site-packages"))
 
 from applypilot.config import load_env

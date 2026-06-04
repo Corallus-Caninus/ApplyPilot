@@ -175,12 +175,13 @@ DEFAULTS = {
 # Highest priority first — falls through on failure.
 # See run_apply.py docstring for model descriptions.
 DEFAULT_PROVIDER_CHAIN = [
-    ("openrouter", "nousresearch/hermes-3-llama-3.1-405b:free"),
-    ("openrouter", "qwen/qwen3-coder:free"),
+    ("opencode-zen", "nemotron-3-super-free"),
+    ("openrouter", "google/gemma-4-31b-it:free"),
     ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
+    ("openrouter", "qwen/qwen3-coder:free"),
+    ("openrouter", "nousresearch/hermes-3-llama-3.1-405b:free"),
     ("openrouter", "nvidia/nemotron-3-super-120b-a12b:free"),
     ("openrouter", "moonshotai/kimi-k2.6:free"),
-    ("openrouter", "google/gemma-4-31b-it:free"),
     ("openrouter", "openai/gpt-oss-120b:free"),
     ("openrouter", "z-ai/glm-4.5-air:free"),
 ]

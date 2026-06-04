@@ -182,7 +182,23 @@ Skills and tools -> be confident. This candidate is a {target_role} with {years}
 
 Open-ended questions ("Why do you want this role?", "Tell us about yourself", "What interests you?") -> Write 2-3 sentences. Be specific to THIS job. Reference something from the job description. Connect it to a real achievement from the resume. No generic fluff. No "I am passionate about..." -- sound like a real person.
 
-EEO/demographics -> "Decline to self-identify" or "Prefer not to say" for everything."""
+EEO/demographics -> "Decline to self-identify" or "Prefer not to say" for everything.
+
+| Field                      | Best answer                              |
+|----------------------------|------------------------------------------|
+| "How Did You Hear" / Source| "Online Job Board" or "LinkedIn"         |
+| Referral / Employee Refer  | "No"                                     |
+| Sponsorship / Visa         | "No" / "Not required"                    |
+| Work Authorization         | "US Citizen" / "Authorized to work"      |
+| Previously employed here   | "No"                                     |
+| Felony / Criminal          | "No"                                     |
+| Security Clearance         | "None"                                   |
+| LinkedIn / Portfolio       | Your profile URL from above              |
+| Relocation / Willing to   | "Yes" (for remote/hybrid)                |
+| Travel %                   | "10%" or "25%"                           |
+| Language / Spanish         | "Basic" or skip if optional              |
+| Salary expectation         | Use SALARY section above                 |
+| Unfamiliar dropdown        | Pick closest match, best guess, move on  |"""
 
 
 def _build_hard_rules(profile: dict) -> str:
@@ -596,17 +612,17 @@ If a browser tool call fails because of a dialog ("Leave site?", alert, confirm,
    
    If the role doesn't fit, output RESULT:FAILED:not_eligible_role immediately. Do NOT navigate to the page. Do NOT waste time filling forms for jobs outside this candidate's profession.
 
-1. Use mcp_playwright_navigate to go to the job URL.
-2. Use mcp_playwright_snapshot to read the page. Check for CAPTCHAs (see CAPTCHA section).
+1. Use mcp_playwright_browser_navigate to go to the job URL.
+2. Use mcp_playwright_browser_snapshot to read the page. Check for CAPTCHAs (see CAPTCHA section).
 3. LOCATION CHECK. Read the page for location info. If not eligible, output RESULT and stop.
-4. Find and click the Apply button using mcp_playwright_click. If email-only (page says "email resume to X"):
+4. Find and click the Apply button using mcp_playwright_browser_click. If email-only (page says "email resume to X"):
    - send_email with subject "Application for {job['title']} -- {display_name}", body = 2-3 sentence pitch + contact info, attach resume PDF: ["{pdf_path}"]
    - Output RESULT:APPLIED. Done.
-   After clicking Apply: mcp_playwright_snapshot. Check for CAPTCHAs.
+   After clicking Apply: mcp_playwright_browser_snapshot. Check for CAPTCHAs.
 5. Login wall?
    5a. FIRST: check the URL. If you landed on {', '.join(blocked_sso)}, or any SSO/OAuth page -> STOP. Output RESULT:FAILED:sso_required. Do NOT try to sign in.
-   5b. Check for popups/new windows. Use mcp_playwright_snapshot to see what appeared. If it's SSO -> RESULT:FAILED:sso_required.
-   5c. **Workday / create-account flow**: Read the page with mcp_playwright_snapshot. Determine which form is showing:
+   5b. Check for popups/new windows. Use mcp_playwright_browser_snapshot to see what appeared. If it's SSO -> RESULT:FAILED:sso_required.
+   5c. **Workday / create-account flow**: Read the page with mcp_playwright_browser_snapshot. Determine which form is showing:
 
       **CREDENTIALS MANAGEMENT:**
       Before attempting sign-in or create-account, run this terminal command to check if
@@ -619,7 +635,7 @@ If a browser tool call fails because of a dialog ("Leave site?", alert, confirm,
       - **Create Account / Register form** (has "Create Account" heading, email + password fields, consent checkbox, "Create Account" / "Submit" button) -> fill in: email = {personal['email']}, password = "{personal.get('password', '')}", check the consent/checkbox, click Submit/Create Account. Do NOT look for a verifyPassword field — if it's not on the page, skip it.
       - If you see **"Don't have an account yet? Create Account"** link -> you are on the sign-in page. Before giving up on sign-in, click the "Create Account" button/link to go to the registration form.
       - If you see **"Already have an account? Sign In"** link -> you are on the create-account page. Before filling, click "Sign In" to switch to the login form.
-   5d. After clicking Login/Sign In/Create Account: wait for navigation, then mcp_playwright_snapshot. Check for CAPTCHAs.
+   5d. After clicking Login/Sign In/Create Account: wait for navigation, then mcp_playwright_browser_snapshot. Check for CAPTCHAs.
    5e. **Email verification**: After creating an account, the site may send a verification email. If the page shows "Check your email", "Verify your email", "Confirmation sent", or similar:
       1. Wait 10 seconds for the email to arrive
       2. Run via terminal: python3 ~/.applypilot/email_verifier.py search "from:(the domain) subject:(verify OR confirm OR welcome OR activate)"
@@ -648,17 +664,18 @@ If a browser tool call fails because of a dialog ("Leave site?", alert, confirm,
          python3 ~/.applypilot/credentials_manager.py update-password {job.get('site', 'unknown')} "<new_password>"
       8. Navigate back to the job URL and sign in with the new password
    5i. All failed? Output RESULT:FAILED:login_issue. Do not loop.
-6. Upload resume. Use mcp_playwright_set_input_files to set the resume file directly on the file input element.
+6. Upload resume. Use mcp_playwright_browser_file_upload to set the resume file.
    File path: {pdf_path}
-   The file input selector is usually 'input[type=file]'. Find it first with mcp_playwright_snapshot, then use mcp_playwright_set_input_files with the ref or selector.
-7. Upload cover letter if there's a field for it. Use mcp_playwright_fill for text, mcp_playwright_set_input_files for file upload.
-8. Fill the form using mcp_playwright_fill for text fields, mcp_playwright_click for checkboxes/buttons/links, mcp_playwright_select_option for dropdowns.
+   The file input selector from snapshot has a target like "e123". Use mcp_playwright_browser_file_upload with paths=["{pdf_path}"].
+7. Upload cover letter if there's a field for it. Use mcp_playwright_browser_type for text, mcp_playwright_browser_file_upload for file upload.
+8. Fill the form using mcp_playwright_browser_type for text fields, mcp_playwright_browser_click for checkboxes/buttons/links, mcp_playwright_browser_select_option for dropdowns. For 3+ fields, use mcp_playwright_browser_fill_form with a fields array.
 9. Answer screening questions using the rules above.
 10. {submit_instruction}
-11. After submit: mcp_playwright_snapshot. Check for CAPTCHAs. Look for "thank you" or "application received".
+11. After submit: mcp_playwright_browser_snapshot. Check for CAPTCHAs. Look for "thank you" or "application received".
 12. Output your result.
 
 == RESULT CODES (output EXACTLY one) ==
+🚨 CRITICAL: Your very last line MUST be exactly one RESULT:... code. The system scans for this to determine the outcome. If you don't output it, the job is marked as failed with no_result_line.
 RESULT:APPLIED -- submitted successfully
 RESULT:EXPIRED -- job closed or no longer accepting applications
 RESULT:CAPTCHA -- blocked by unsolvable captcha
@@ -669,38 +686,42 @@ RESULT:FAILED:not_eligible_role -- this is NOT a software/hardware engineering r
 RESULT:FAILED:reason -- any other failure (brief reason)
 
 == BROWSER EFFICIENCY ==
-- Use mcp_playwright_snapshot ONCE per page to understand it. Then use mcp_playwright_snapshot again when you need element refs to click/fill.
+- All MCP Playwright tools use target="ref" parameter format (e.g. target="e47"). Do NOT use ref="e47" — that's a different convention. The target value is the ref ID string (without @).
+- Use mcp_playwright_browser_snapshot ONCE per page to understand it. Then use it again when you need current element refs for clicking/filling.
 - Multi-page forms (Workday, Taleo, iCIMS): snapshot each new page, fill all fields, click Next/Continue. Repeat until final review page.
 - Fill ALL fields you can before making the next API call. Batch your work.
-- Keep your thinking SHORT. Don't repeat page structure back.
+- Use mcp_playwright_browser_fill_form with a fields array when you have 3+ fields to fill at once — it's much faster than one-at-a-time.
+- Keep your thinking SHORT. Don't repeat page structure back. Just state what you're doing next.
 - CAPTCHA AWARENESS: After any navigation, Apply/Submit/Login click, or when a page feels stuck -- check for CAPTCHAs. Invisible CAPTCHAs (Turnstile, reCAPTCHA v3) show NO visual widget but block form submissions silently.
 
 == FORM TRICKS ==
-- Popup/new window opened? Use mcp_playwright_snapshot to see what appeared. Check the URL.
-- "Upload your resume" pre-fill page (Workday, Lever, etc.): This is NOT the application form yet. Use mcp_playwright_set_input_files to set the file, wait for parsing to finish, then click Next/Continue.
-- Dropdown won't fill? mcp_playwright_click to open it, then mcp_playwright_click the option, or use mcp_playwright_select_option.
-- Checkbox won't check? Use mcp_playwright_click on it. Snapshot to verify.
+- Popup/new window opened? Use mcp_playwright_browser_snapshot to see what appeared. Check the URL.
+- "Upload your resume" pre-fill page (Workday, Lever, etc.): This is NOT the application form yet. Use mcp_playwright_browser_file_upload to set the file, wait for parsing to finish, then click Next/Continue.
+- Dropdown won't fill? mcp_playwright_browser_click to open it, then mcp_playwright_browser_click the option, or use mcp_playwright_browser_select_option.
+- Checkbox won't check? Use mcp_playwright_browser_click on it. Snapshot to verify.
 - Phone field with country prefix: just type digits {phone_digits}
 - Date fields: {datetime.now().strftime('%m/%d/%Y')}
-- Validation errors after submit? Take mcp_playwright_snapshot to see error messages. Fix all, retry.
+- Validation errors after submit? Take mcp_playwright_browser_snapshot to see error messages. Fix all, retry.
 - Honeypot fields (hidden, "leave blank"): skip them.
 - Format-sensitive fields: read the placeholder text, match it exactly.
+- **Stuck on a specific field?** Give your best answer and move on. Do NOT restart the job, do NOT go back to the job page, do NOT navigate away. One stuck field is better than zero fields + a lost application. If you absolutely cannot interact with a field, leave it empty (skip) and continue - the next button will show validation errors if required. Use mcp_playwright_browser_fill_form for 3+ fields to batch them.
 
 == FILE UPLOAD ==
-Use mcp_playwright_set_input_files to upload the resume. This is the built-in Playwright file uploader — it works with the browser's file input directly, no external scripts needed.
+Use mcp_playwright_browser_file_upload to upload the resume. This calls the built-in Playwright file uploader directly — it works with the browser's file input.
 
-1. Find the file input element using mcp_playwright_snapshot (look for 'input[type=file]' or upload buttons)
-2. Run: mcp_playwright_set_input_files with the element ref/selector and the file path: {pdf_path}
+1. Find the file input element using mcp_playwright_browser_snapshot (look for 'input[type=file]' or upload buttons)
+2. Run: mcp_playwright_browser_file_upload with paths=["{pdf_path}"] 
 3. The file will be set on the form. Snapshot to confirm it was accepted.
-4. If the file input is hidden (common in Workday, Lever): click the upload area first to make the input active, then use mcp_playwright_set_input_files.
-5. Still failing after 2 tries? Skip upload and move on.
+4. If the file input is hidden (common in Workday, Lever): click the upload area first to make the input active, then use mcp_playwright_browser_file_upload.
+5. Still failing after 2 tries? Skip upload and continue filling the rest of the form.
 
 {captcha_section}
 
 == TIME LIMIT ==
-You have until the process timeout (~15 min) to complete this application. Work efficiently, but don't rush — this model is free. There is NO iteration cap.
-- If the form upload isn't working, fields aren't responding, or you're stuck in a loop with no progress after many attempts, give up early — don't burn the whole timeout.
+You have until the process timeout (~15 min) to complete this application. Work efficiently but don't rush — there is NO iteration cap. Every job is winnable.
 - Log a brief status after each iteration (what you did, what you found). This helps diagnose where applications get stuck.
+- If a specific field or upload isn't working after several attempts, skip it and move to the next step. Don't let one problem block the entire application.
+- Persistence wins: try different approaches to get past a stuck page. Try clicking different buttons, scrolling, filling fields in a different order. The form WILL cooperate eventually.
 
 == LOGGING-FIRST ==
 - Add a log line at the START of every job attempt so you can always tell when a job began vs. when it failed.
@@ -708,9 +729,11 @@ You have until the process timeout (~15 min) to complete this application. Work 
 - When something goes wrong, check your logs before guessing at the problem. The logs will show you exactly how far you got and where it broke.
 
 == WHEN TO GIVE UP ==
-- Same page after 3 attempts with no progress -> RESULT:FAILED:stuck
+Only give up when the page itself confirms the job is unreachable:
 - Job is closed/expired/page says "no longer accepting" -> RESULT:EXPIRED
 - Page is broken/500 error/blank -> RESULT:FAILED:page_error
+- CAPTCHA repeatedly fails (after CapSolver + manual fallback) -> RESULT:CAPTCHA
+- Stuck on the same page with zero progress indicators after many different approaches -> RESULT:FAILED:stuck (only after trying 5+ different strategies)
 Stop immediately. Output your RESULT code. Do not loop."""
 
     return prompt

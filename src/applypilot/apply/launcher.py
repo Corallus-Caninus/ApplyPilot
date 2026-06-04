@@ -139,7 +139,8 @@ def detect_provider_error(output: str) -> bool:
 
 
 def _build_provider_cmd(hermes_path: str, provider: str, model: str,
-                        agent_prompt: str) -> tuple[list[str], dict]:
+                        agent_prompt: str,
+                        worker_id: int = 0) -> tuple[list[str], dict]:
     """Build Hermes CLI command + environment for a specific provider/model.
 
     Always creates a temporary Hermes config that sets ``agent.api_max_retries: 1``
@@ -166,7 +167,7 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         _cfg = {}
     _cfg.setdefault("agent", {})["api_max_retries"] = 1
 
-    cmd = [hermes_path, "chat", "-v"]
+    cmd = [hermes_path, "chat", "-v", "--pass-session-id"]
     env = os.environ.copy()
     env.pop("CLAUDECODE", None)
     env.pop("CLAUDE_CODE_ENTRYPOINT", None)
@@ -203,11 +204,18 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
     if model:
         env["LLM_MODEL"] = model
 
-    # Write the temp config and point HERMES_HOME to it
-    _tmp_cfg = os.path.join(_tmpdir, "config.yaml")
+    # Write the temp config and point HERMES_HOME to a persistent per-worker dir
+    # so sessions survive across retries (--resume works).
+    # For opencode-zen, override base_url to Zen API (not Go) without touching
+    # the global config, so the user's personal Go sessions are unaffected.
+    if provider == "opencode-zen":
+        _cfg.setdefault("model", {})["base_url"] = "https://opencode.ai/zen/v1"
+    _hermes_home = os.path.join(str(config.APP_DIR), f"hermes-home-{worker_id}")
+    os.makedirs(_hermes_home, exist_ok=True)
+    _tmp_cfg = os.path.join(_hermes_home, "config.yaml")
     with open(_tmp_cfg, "w") as _f:
         _yaml.dump(_cfg, _f, default_flow_style=False, sort_keys=False)
-    env["HERMES_HOME"] = _tmpdir
+    env["HERMES_HOME"] = _hermes_home
 
     return cmd, env
 
@@ -264,17 +272,24 @@ def _probe_provider(provider: str, model: str) -> bool:
             return resp.status == 200
         elif provider in ("opencode", "opencode-zen", "opencode-go"):
             # OpenCode — hit the models endpoint with the API key
+            key = ""
             key_path = os.path.expanduser("~/Code/hermes/opencode-go-key")
             if os.path.isfile(key_path):
                 key = open(key_path).read().strip()
-                base = "https://opencode.ai/zen/go/v1" if provider == "opencode-go" else "https://opencode.ai/zen/v1"
-                req = urllib.request.Request(
-                    f"{base}/models",
-                    headers={"Authorization": f"Bearer {key}"},
-                )
-                resp = urllib.request.urlopen(req, timeout=10)
-                return resp.status == 200
-            return False
+            if not key:
+                key = os.environ.get("OPENCODE_API_KEY", "")
+            if not key:
+                return False
+            base = "https://opencode.ai/zen/v1"
+            req = urllib.request.Request(
+                f"{base}/models",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "User-Agent": "hermes-agent-probe/1.0",
+                },
+            )
+            resp = urllib.request.urlopen(req, timeout=10)
+            return resp.status == 200
         else:
             return False
     except Exception:
@@ -672,20 +687,29 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     chain_len = len(provider_chain)
     last_provider = ""
     last_model = ""
-
-    for chain_idx, (provider, model) in enumerate(provider_chain):
+    chain_idx = 0
+    session_id: str | None = None  # captured from output for session resume
+    _last_error_time: float = 0.0  # cooldown to prevent prober bounce
+    while chain_idx < chain_len:
+        provider, model = provider_chain[chain_idx]
         # Use the background prober's latest result to decide which provider to use.
         # The prober tests the highest-priority provider every 30s.
         best = _get_best_available()
         if best is False and chain_idx == 0 and chain_len > 1:
             # Prober says highest-priority provider is down — skip it
             add_event(f"[W{worker_id}] {provider}/{model} unavailable (probed) — skipping")
+            chain_idx += 1
             continue
         elif best and best is not False and chain_idx > 0:
-            # Prober says a higher-priority provider recovered — jump to it
-            provider, model = best
-            chain_idx = 0
-            add_event(f"[W{worker_id}] Prober detected recovery — switching to {provider}/{model}")
+            # Prober says a higher-priority provider recovered — only switch back
+            # if enough time has passed since the last error (prevent infinite bounce)
+            _cooldown_remaining = 60 - (time.time() - _last_error_time)
+            if _cooldown_remaining <= 0:
+                provider, model = best
+                chain_idx = 0
+                add_event(f"[W{worker_id}] Prober detected recovery — switching to {provider}/{model}")
+            else:
+                add_event(f"[W{worker_id}] Prober detected recovery — waiting {_cooldown_remaining:.0f}s cooldown")
 
         last_provider = provider
         last_model = model
@@ -696,7 +720,9 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         start = time.time()
         proc = None
 
-        cmd, env = _build_provider_cmd(hermes_path, provider, model, agent_prompt)
+        cmd, env = _build_provider_cmd(hermes_path, provider, model, agent_prompt, worker_id=worker_id)
+        if session_id:
+            cmd += ["--resume", session_id]
         env["LLM_PROVIDER"] = provider
 
         try:
@@ -717,7 +743,8 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             # ── Start mid-job prober ────────────────────────────────────────
             # Checks higher-priority providers every 30s; writes switch file
             # so Hermes can seamlessly swap provider/model mid-conversation.
-            _switch_file = os.path.expanduser("~/.hermes/apply-provider-switch.json")
+            _hermes_home = env.get("HERMES_HOME", os.path.expanduser("~/.hermes"))
+            _switch_file = os.path.join(_hermes_home, "apply-provider-switch.json")
             _prober = Thread(
                 target=_mid_job_switch_prober,
                 args=(proc, provider_chain, chain_idx, _switch_file, worker_id),
@@ -752,6 +779,14 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             output = "\n".join(stdout_lines)
             elapsed = int(time.time() - start)
             duration_ms = int((time.time() - overall_start) * 1000)
+
+            # Capture session ID from output for potential resume on retry
+            if not session_id:
+                for _line in stdout_lines:
+                    _m = __import__('re').search(r'session=(\S+)', _line)
+                    if _m:
+                        session_id = _m.group(1)
+                        break
 
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             job_log = config.LOG_DIR / f"claude_{ts}_w{worker_id}_{job.get('site', 'unknown')[:20]}.txt"
@@ -792,14 +827,17 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 
                 # Check if the result is actually a provider error disguised as RESULT:FAILED
                 if status_key.startswith("failed:") and detect_provider_error(output):
+                    _last_error_time = time.time()
                     if chain_idx < chain_len - 1:
                         add_event(f"[W{worker_id}] {label} provider error (fallback #{chain_idx + 2})")
+                        chain_idx += 1
                         continue  # try next provider
-                    # Last provider — return the original result
-                    add_event(f"[W{worker_id}] {display_status.upper()} ({elapsed}s): {job['title'][:30]}")
-                    update_state(worker_id, status="failed",
-                                 last_action=f"{display_status.upper()} ({elapsed}s)")
-                    return status_key, duration_ms
+                    # All providers exhausted — wrap around to first and retry
+                    chain_idx = 0
+                    add_event(f"[W{worker_id}] All providers exhausted — wrapping to first in 10s")
+                    update_state(worker_id, last_action="all providers exhausted, retrying (10s)")
+                    time.sleep(10)
+                    continue
 
                 if status_key == "applied":
                     add_event(f"[W{worker_id}] APPLIED via {label} ({elapsed}s): {job['title'][:30]}")
@@ -821,13 +859,17 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 
             # No RESULT line found — check for provider errors
             if detect_provider_error(output):
+                _last_error_time = time.time()
                 if chain_idx < chain_len - 1:
                     add_event(f"[W{worker_id}] {label} no result (provider error, fallback #{chain_idx + 2})")
+                    chain_idx += 1
                     continue
-                add_event(f"[W{worker_id}] {label} no result (last provider)")
-                update_state(worker_id, status="failed",
-                             last_action=f"no result ({elapsed}s)")
-                return "failed:provider_error", duration_ms
+                # All providers exhausted — wrap around to first and retry
+                chain_idx = 0
+                add_event(f"[W{worker_id}] All providers exhausted — wrapping to first in 10s")
+                update_state(worker_id, last_action="all providers exhausted, retrying (10s)")
+                time.sleep(10)
+                continue
 
             add_event(f"[W{worker_id}] NO RESULT ({elapsed}s)")
             update_state(worker_id, status="failed", last_action=f"no result ({elapsed}s)")
@@ -835,24 +877,38 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 
         except subprocess.TimeoutExpired:
             elapsed = int(time.time() - start)
+            _last_error_time = time.time()
             add_event(f"[W{worker_id}] {label} TIMEOUT ({elapsed}s)")
             update_state(worker_id, status="failed", last_action=f"TIMEOUT ({elapsed}s)")
             if proc is not None:
                 _kill_process_tree(proc.pid)
             if chain_idx < chain_len - 1:
                 add_event(f"[W{worker_id}] Timeout may be provider issue — fallback #{chain_idx + 2}")
+                chain_idx += 1
                 continue
-            return "failed:timeout", int((time.time() - overall_start) * 1000)
+            # All providers exhausted — wrap around to first and retry
+            chain_idx = 0
+            add_event(f"[W{worker_id}] All providers exhausted — wrapping to first in 10s")
+            update_state(worker_id, last_action="all providers exhausted, retrying (10s)")
+            time.sleep(10)
+            continue
 
         except Exception as e:
             duration_ms = int((time.time() - overall_start) * 1000)
+            _last_error_time = time.time()
             err_msg = str(e)[:100]
             add_event(f"[W{worker_id}] {label} ERROR: {err_msg[:40]}")
             update_state(worker_id, status="failed", last_action=f"ERROR: {err_msg[:25]}")
             if chain_idx < chain_len - 1:
                 add_event(f"[W{worker_id}] Error may be transient — fallback #{chain_idx + 2}")
+                chain_idx += 1
                 continue
-            return f"failed:{err_msg}", duration_ms
+            # All providers exhausted — wrap around to first and retry
+            chain_idx = 0
+            add_event(f"[W{worker_id}] All providers exhausted — wrapping to first in 10s")
+            update_state(worker_id, last_action="all providers exhausted, retrying (10s)")
+            time.sleep(10)
+            continue
 
         finally:
             with _claude_lock:
