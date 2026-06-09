@@ -347,12 +347,6 @@ EARLY BAIL (if any match, output RESULT and STOP immediately):
 11. Output RESULT code (see below). Never output RESULT:APPLIED unless you
     personally clicked Submit and then confirmed the submission via screenshot.
 
-12. Before the RESULT line, output a PROGRESS: line summarizing what you
-    accomplished this session (e.g. "PROGRESS: Navigated to URL, clicked
-    Apply, filled name/email/phone on page 1 of 3").  This summary is used
-    when the session is resumed after an interruption.  Be specific about
-    which fields were filled and which page you reached.
-
 == RESULT CODES ==
 APPLIED | EXPIRED | CAPTCHA | LOGIN_ISSUE
 FAILED:not_eligible_location | FAILED:not_eligible_work_auth
