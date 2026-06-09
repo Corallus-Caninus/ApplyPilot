@@ -179,6 +179,8 @@ cleanup() {
         kill "$MONITOR_PID" 2>/dev/null
         fuser -k 11435/tcp 2>/dev/null
     fi
+    # Remove the auto-restart flag so the server doesn't respawn
+    rm -f "/tmp/llama_apply_restart_${LLAMA_PORT}"
     exit $exit_code
 }
 trap cleanup SIGINT SIGTERM EXIT
@@ -224,34 +226,48 @@ ok "Using: $LLAMA_SERVER"
 if curl -s "http://${HOST}:${LLAMA_PORT}/v1/models" > /dev/null 2>&1; then
     ok "llama-server already running on port ${LLAMA_PORT}"
 else
-    info "Starting llama-server with 100% GPU + prompt caching..."
+    info "Starting llama-server with 100% GPU + prompt caching (auto-restart on crash)..."
     fuser -k "${LLAMA_PORT}/tcp" 2>/dev/null || true
     sleep 1
     rm -f "$LOG"
 
-    env -i \
-        PATH="/run/wrappers/bin:$HOME/.nix-profile/bin:/nix/profile/default/bin:/run/current-system/sw/bin" \
-        HOME="$HOME" \
-        HSA_OVERRIDE_GFX_VERSION=9.0.0 \
-        HIP_VISIBLE_DEVICES=0 \
-        ROCR_VISIBLE_DEVICES=0 \
-        "$LLAMA_SERVER" \
-        -m "$MODEL_GGUF" \
-        -ngl ${NGL} \
-        --flash-attn on \
-        --cache-prompt \
-        --cache-type-k q8_0 \
-        --cache-type-v q8_0 \
-        --reasoning off \
-        --alias "${MODEL}" \
-        --ctx-checkpoints 48 \
-        --timeout 1800 \
-        ${MTP_FLAGS:-} ${DRAFT_FLAGS:-} \
-        -c ${MODEL_CTX} \
-        --host "$HOST" \
-        --port "$LLAMA_PORT" \
-        > "$LOG" 2>&1 &
-
+    # Background restart loop — llama-server sometimes crashes on grammar
+    # errors (the model generates unexpected tokens).  Auto-restart keeps
+    # Hermes alive; it retries the API call on connection failure.
+    _llama_restart_flag="/tmp/llama_apply_restart_${LLAMA_PORT}"
+    touch "$_llama_restart_flag"
+    (
+        while [ -f "$_llama_restart_flag" ]; do
+            env -i \
+                PATH="/run/wrappers/bin:$HOME/.nix-profile/bin:/nix/profile/default/bin:/run/current-system/sw/bin" \
+                HOME="$HOME" \
+                HSA_OVERRIDE_GFX_VERSION=9.0.0 \
+                HIP_VISIBLE_DEVICES=0 \
+                ROCR_VISIBLE_DEVICES=0 \
+                "$LLAMA_SERVER" \
+                -m "$MODEL_GGUF" \
+                -ngl ${NGL} \
+                --flash-attn on \
+                --cache-prompt \
+                --cache-type-k q8_0 \
+                --cache-type-v q8_0 \
+                --reasoning off \
+                --alias "${MODEL}" \
+                --ctx-checkpoints 48 \
+                --timeout 1800 \
+                ${MTP_FLAGS:-} ${DRAFT_FLAGS:-} \
+                -c ${MODEL_CTX} \
+                --host "$HOST" \
+                --port "$LLAMA_PORT" \
+                >> "$LOG" 2>&1
+            _exit_code=$?
+            # Only restart if the flag still exists (we weren't trying to stop)
+            if [ -f "$_llama_restart_flag" ]; then
+                echo "[$(date '+%H:%M:%S')] llama-server exited (code $_exit_code) — restarting in 2s..." >> "$LOG"
+                sleep 2
+            fi
+        done
+    ) &
     LLAMA_PID=$!
     for i in $(seq 1 30); do
         if curl -s "http://${HOST}:${LLAMA_PORT}/v1/models" > /dev/null 2>&1; then
