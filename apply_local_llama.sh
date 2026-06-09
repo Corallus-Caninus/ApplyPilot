@@ -64,10 +64,19 @@ case "$MODEL_FLAG" in
         ;;
     9b|9B|8b|8B)
         MODEL="qwen3.5:9b"
-        MODEL_LABEL="Qwen 3.5 9B (spec-draft)"
+        MODEL_LABEL="Qwen 3.5 9B (MTP)"
         MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-9B-MTP-Q4_K_M.gguf"
-        # 9B-MTP Q4_K_M ~5.6GB + 0.8B-MTP draft ~0.8GB = ~6.4GB total
-        # Uses separate 0.8B MTP draft for speculative decoding
+        # 9B-MTP Q4_K_M ~5.6GB — self-drafts via MTP heads
+        MODEL_CTX=64000
+        NGL=33
+        MTP_FLAGS="--spec-type draft-mtp --spec-draft-n-max 3"
+        ;;
+    9bd|9BD|9b-draft|9B-DRAFT)
+        MODEL="qwen3.5:9b"
+        MODEL_LABEL="Qwen 3.5 9B (0.8B spec-draft)"
+        MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-9B-MTP-Q4_K_M.gguf"
+        # 9B-MTP Q4_K_M ~5.6GB + 0.8B-MTP draft ~0.8GB
+        # Uses tiny 0.8B MTP as separate speculative draft
         MODEL_CTX=64000
         NGL=33
         MTP_FLAGS=""
@@ -122,7 +131,7 @@ case "$MODEL_FLAG" in
         MTP_FLAGS=""
         ;;
     *)
-        echo "Unknown model: $MODEL_FLAG (use 0.8b, 4b, 9b, lfm, qwenmoe, hermes, or llama)"
+        echo "Unknown model: $MODEL_FLAG (use 0.8b, 4b, 9b, 9bd, lfm, qwenmoe, hermes, or llama)"
         exit 1
         ;;
 esac
@@ -146,9 +155,9 @@ if echo "$MODEL" | grep -qE 'llama|hermes' && [ -f "$LLAMA_DRAFT_GGUF" ]; then
 fi
 
 # ── Qwen spec-draft (0.8B-MTP, same tokenizer as Qwen3.5) ─────────────────
-# Provides speculative decoding for 4B and 9B models using the tiny 0.8B MTP.
+# Only enabled for explicit "9bd" or "4bd" flags, not default 9b/4b.
 QWEN_DRAFT_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-0.8B-MTP-Q8_0.gguf"
-if echo "$MODEL" | grep -qE 'qwen.*5.*9b|qwen.*5.*4b' && [ -f "$QWEN_DRAFT_GGUF" ]; then
+if echo "$MODEL_FLAG" | grep -qi 'draft' && echo "$MODEL" | grep -qE 'qwen.*5.*9b|qwen.*5.*4b' && [ -f "$QWEN_DRAFT_GGUF" ]; then
     DRAFT_FLAGS="--spec-draft-model $QWEN_DRAFT_GGUF --spec-draft-n-max 8 --spec-draft-n-min 2 --spec-draft-type-k q8_0 --spec-draft-type-v q8_0 --spec-type draft-mtp"
 fi
 
