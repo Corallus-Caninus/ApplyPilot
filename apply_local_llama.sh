@@ -64,12 +64,13 @@ case "$MODEL_FLAG" in
         ;;
     9b|9B|8b|8B)
         MODEL="qwen3.5:9b"
-        MODEL_LABEL="Qwen 3.5 9B (MTP)"
+        MODEL_LABEL="Qwen 3.5 9B (spec-draft)"
         MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-9B-MTP-Q4_K_M.gguf"
-        # 9B-MTP Q4_K_M ~5.6GB — self-drafts via MTP heads
+        # 9B-MTP Q4_K_M ~5.6GB + 0.8B-MTP draft ~0.8GB = ~6.4GB total
+        # Uses separate 0.8B MTP draft for speculative decoding
         MODEL_CTX=64000
         NGL=33
-        MTP_FLAGS="--spec-type draft-mtp --spec-draft-n-max 3"
+        MTP_FLAGS=""
         ;;
     0.8b|0.8B|tiny|micro)
         MODEL="qwen3.5:0.8b"
@@ -142,6 +143,13 @@ fi
 LLAMA_DRAFT_GGUF="$HOME/Code/qwen_mi25/llama-3.2-1b-instruct-q8_0.gguf"
 if echo "$MODEL" | grep -qE 'llama|hermes' && [ -f "$LLAMA_DRAFT_GGUF" ]; then
     DRAFT_FLAGS="--spec-draft-model $LLAMA_DRAFT_GGUF --spec-draft-n-max 8 --spec-draft-n-min 2 --spec-draft-type-k q8_0 --spec-draft-type-v q8_0"
+fi
+
+# ── Qwen spec-draft (0.8B-MTP, same tokenizer as Qwen3.5) ─────────────────
+# Provides speculative decoding for 4B and 9B models using the tiny 0.8B MTP.
+QWEN_DRAFT_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-0.8B-MTP-Q8_0.gguf"
+if echo "$MODEL" | grep -qE 'qwen.*5.*9b|qwen.*5.*4b' && [ -f "$QWEN_DRAFT_GGUF" ]; then
+    DRAFT_FLAGS="--spec-draft-model $QWEN_DRAFT_GGUF --spec-draft-n-max 8 --spec-draft-n-min 2 --spec-draft-type-k q8_0 --spec-draft-type-v q8_0 --spec-type draft-mtp"
 fi
 
 # ── Auto-discover llama-server binary ────────────────────────────────────
