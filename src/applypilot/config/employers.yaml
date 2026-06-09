@@ -226,6 +226,36 @@ employers:
     site_id: "uberCareers"
     base_url: "https://uber.wd5.myworkdayjobs.com"
 
+  amd:
+    name: "AMD"
+    tenant: "amd"
+    site_id: "AMD_Careers"
+    base_url: "https://amd.wd5.myworkdayjobs.com"
+
+  arm:
+    name: "ARM"
+    tenant: "arm"
+    site_id: "ARM_Careers"
+    base_url: "https://arm.wd5.myworkdayjobs.com"
+
+  qualcomm:
+    name: "Qualcomm"
+    tenant: "qualcomm"
+    site_id: "QualcommExternal"
+    base_url: "https://qualcomm.wd5.myworkdayjobs.com"
+
+  oracle:
+    name: "Oracle"
+    tenant: "oracle"
+    site_id: "OracleCareers"
+    base_url: "https://oracle.wd5.myworkdayjobs.com"
+
+  ibm:
+    name: "IBM"
+    tenant: "ibm"
+    site_id: "IBM_Careers"
+    base_url: "https://ibm.wd5.myworkdayjobs.com"
+
   # ── Consulting ──────────────────────────────────────────────────────────
 
   pwc:

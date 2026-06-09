@@ -1,15 +1,19 @@
 """Rich live dashboard for the apply pipeline.
 
-Displays real-time worker status, job progress, and recent events
-in a terminal dashboard using the Rich library.
+Displays real-time worker status, job progress, recent events,
+and llama-server KV prompt cache stats in a terminal dashboard
+using the Rich library.
 """
 
+import json
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from urllib.request import urlopen, Request
 
 from rich.console import Group
 from rich.panel import Panel
@@ -55,6 +59,169 @@ _events: list[str] = []
 _lock = threading.Lock()
 MAX_EVENTS = 8
 MAX_HISTORY = 15
+
+# ── KV Cache Monitor ───────────────────────────────────────────────────────
+# Polls llama-server /slots endpoint to display real-time prompt cache stats.
+_DEFAULT_LLAMA_PORT = 11434
+_cache_data: dict = {"slots": [], "error": None, "last_update": 0.0}
+_cache_lock = threading.Lock()
+
+
+def _poll_cache(port: int = _DEFAULT_LLAMA_PORT) -> None:
+    """Background thread: polls llama-server /slots every 2s."""
+    global _cache_data
+    url = f"http://127.0.0.1:{port}/slots"
+    while True:
+        try:
+            req = Request(url, method="GET")
+            resp = urlopen(req, timeout=3)
+            data = json.loads(resp.read().decode())
+            total_tok = 0
+            cached_tok = 0
+            for slot in data:
+                pt = slot.get("n_prompt_tokens", 0) or 0
+                pc = slot.get("n_prompt_tokens_cache", 0) or 0
+                total_tok += pt
+                cached_tok += pc
+            with _cache_lock:
+                _cache_data = {
+                    "slots": data,
+                    "total_tokens": total_tok,
+                    "cached_tokens": cached_tok,
+                    "error": None,
+                    "last_update": time.time(),
+                }
+        except Exception as e:
+            with _cache_lock:
+                _cache_data["error"] = str(e)[:60]
+                _cache_data["last_update"] = time.time()
+        time.sleep(2)
+
+
+def start_cache_monitor(port: int = _DEFAULT_LLAMA_PORT) -> None:
+    """Start the background cache poller daemon thread."""
+    t = threading.Thread(target=_poll_cache, args=(port,), daemon=True)
+    t.start()
+
+
+def get_agent_output_panel(worker_id: int = 0, max_lines: int = 20) -> Panel | None:
+    """Build a Rich Panel showing last N lines of Hermes agent output."""
+    log_dir = os.path.join(str(Path.home()), ".applypilot", "logs")
+    log_path = os.path.join(log_dir, f"worker-{worker_id}.log")
+    if not os.path.exists(log_path):
+        return None
+
+    try:
+        with open(log_path, "rb") as f:
+            # Read last 64KB for line sampling
+            f.seek(0, 2)
+            size = f.tell()
+            seek_back = min(size, 65536)
+            f.seek(size - seek_back)
+            raw = f.read(seek_back).decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+    # Split into lines, take last N*4, filter
+    all_lines = raw.split("\n")
+    sample = all_lines[-max_lines * 4:]  # generous buffer
+
+    kept = []
+    for line in sample:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Skip noisy output: huge JSON blobs, DOM dumps, full prompts
+        if len(stripped) > 250:
+            continue
+        if stripped.startswith("{\"result\":") or stripped.startswith("{\"error\":"):
+            continue
+        if "You are an autonomous" in stripped or "== JOB ==" in stripped:
+            continue
+        if "RESUME TEXT" in stripped or "APPLICANT PROFILE" in stripped:
+            continue
+        if stripped.startswith("```") or stripped.startswith("│") or stripped.startswith("┊"):
+            continue
+        # Keep lines that look like agent output
+        if any(s in stripped for s in ("🤖", "📞", "✅", "❌", "⏱️", "🔄", "💾", "🔧",
+                                        "RESULT:", "API call", "Tool ", "Model:",
+                                        "Session:", "Captured reasoning",
+                                        "Starting", "APPLYING", "FAILED", "STOPPING",
+                                        "Skipping", "Ctrl+C", "applied=")):
+            kept.append(stripped[:120])
+        elif kept and not stripped.startswith("━") and not stripped.startswith("╔") \
+             and not stripped.startswith("┏") and not stripped.startswith("┃"):
+            # Also keep contextual lines that follow a kept line (e.g., error details)
+            kept.append(stripped[:120])
+
+    # Take last max_lines
+    display = kept[-max_lines:]
+    if not display:
+        return None
+
+    text = "\n".join(display)
+    return Panel(
+        text,
+        title="[bold]Hermes Output[/bold]",
+        border_style="green",
+        height=min(max_lines + 2, len(display) + 2),
+    )
+
+
+def get_cache_panel() -> Panel | None:
+    """Build a Rich Panel showing llama-server KV cache stats.
+
+    Returns None if llama-server isn't reachable (not running).
+    """
+    with _cache_lock:
+        data = dict(_cache_data)
+
+    if data.get("error") and not data.get("slots"):
+        return None  # Server not reachable — skip panel
+
+    slots = data.get("slots", [])
+    if not slots:
+        return None
+
+    lines = []
+    total_prompt = 0
+    total_cache = 0
+    for slot in slots:
+        sid = slot.get("id", 0)
+        n_ctx = slot.get("n_ctx", 0)
+        pt = slot.get("n_prompt_tokens", 0) or 0
+        pp = slot.get("n_prompt_tokens_processed", 0) or 0
+        pc = slot.get("n_prompt_tokens_cache", 0) or 0
+        busy = slot.get("is_processing", False)
+        total_prompt += pt
+        total_cache += pc
+
+        status = "[yellow]▸[/]" if busy else "[dim]·[/]"
+        if pt > 0:
+            pct = pc * 100 // pt if pt else 0
+            bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+            lines.append(
+                f"  {status} slot {sid}: {pp}/{pt} tok | cache {bar} {pct}%"
+            )
+        else:
+            lines.append(f"  {status} slot {sid}: idle")
+
+    # Aggregate cache info
+    total_pct = total_cache * 100 // total_prompt if total_prompt else 0
+    ctx_gb = slots[0].get("n_ctx", 0) * 4 / (1024**3) if slots else 0
+    header = (
+        f"[bold]KV Prompt Cache[/bold]  "
+        f"(ctx: {ctx_gb:.1f}G tok | "
+        f"hit: {total_cache}/{total_prompt} = {total_pct}%)"
+    )
+
+    text = "\n".join(lines)
+    return Panel(
+        text,
+        title=header,
+        border_style="blue",
+        height=len(lines) + 2,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -233,15 +400,17 @@ def render_dashboard() -> Table:
 
 
 def render_full() -> Table | Group:
-    """Render the dashboard table plus the recent events panel.
+    """Render the dashboard table plus the recent events and cache panels.
 
     Returns:
-        A Rich Group (table + events panel) or just the table if no events.
+        A Rich Group (table + events panel + cache panel) or just the table.
     """
     table = render_dashboard()
 
     with _lock:
         event_lines = list(_events)
+
+    panels = [table]
 
     if event_lines:
         event_text = Text.from_markup("\n".join(event_lines))
@@ -251,9 +420,19 @@ def render_full() -> Table | Group:
             border_style="dim",
             height=min(MAX_EVENTS + 2, len(event_lines) + 2),
         )
-        return Group(table, events_panel)
+        panels.append(events_panel)
 
-    return table
+    # Show KV cache panel if llama-server is reachable
+    cache_panel = get_cache_panel()
+    if cache_panel:
+        panels.append(cache_panel)
+
+    # Show agent output panel
+    agent_panel = get_agent_output_panel()
+    if agent_panel:
+        panels.append(agent_panel)
+
+    return Group(*panels) if len(panels) > 1 else table
 
 
 def get_totals() -> dict[str, int | float]:

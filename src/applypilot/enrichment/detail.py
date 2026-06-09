@@ -320,6 +320,94 @@ DESCRIPTION_SELECTORS = [
 ]
 
 
+# -- LinkedIn-specific extraction ---------------------------------------------
+
+LINKEDIN_DOMAIN = "linkedin.com"
+
+
+def is_linkedin_url(url: str) -> bool:
+    """Check if a URL is a LinkedIn job page."""
+    return "linkedin.com/jobs/" in url
+
+
+def extract_linkedin_apply_url(page) -> str | None:
+    """Extract external apply URL from a LinkedIn job page using JS evaluation.
+
+    LinkedIn job pages have the external apply URL embedded in various places:
+    - A button/link with text "Apply on company site" or "Apply externally"
+    - A data attribute on the apply button
+    - A JSON-LD script with directApply flag
+    Returns the external ATS URL or None if not found (e.g. Easy Apply / internal).
+    """
+    try:
+        # Strategy 1: Find external apply link via text content
+        url = page.evaluate("""() => {
+            // Look for links/buttons pointing outside LinkedIn
+            const links = document.querySelectorAll('a');
+            for (const link of links) {
+                const text = (link.textContent || '').trim().toLowerCase();
+                const href = (link.getAttribute('href') || '');
+                // "Apply on company site" or "View external apply" link
+                if ((text.includes('apply on') || text.includes('external') || text.includes('company site'))
+                    && href && href.startsWith('http') && !href.includes('linkedin.com')) {
+                    return href;
+                }
+            }
+            return null;
+        }""")
+        if url:
+            return url
+
+        # Strategy 2: Find apply button via data-tracking-control-name
+        url = page.evaluate("""() => {
+            const btns = document.querySelectorAll('[data-tracking-control-name*="apply"], [data-tracking="apply"]');
+            for (const btn of btns) {
+                const href = btn.getAttribute('href') || btn.getAttribute('data-url') || '';
+                if (href && href.startsWith('http') && !href.includes('linkedin.com')) {
+                    return href;
+                }
+            }
+            return null;
+        }""")
+        if url:
+            return url
+
+        # Strategy 3: Check JSON-LD for directApply
+        for el in page.query_selector_all('script[type="application/ld+json"]'):
+            try:
+                data = json.loads(el.inner_text())
+                # Walk the JSON looking for JobPosting with directApply
+                def find_apply(data):
+                    if isinstance(data, dict):
+                        if data.get("@type") == "JobPosting":
+                            if data.get("directApply"):
+                                return data.get("url")
+                            # Check applicationContact
+                            contact = data.get("applicationContact")
+                            if isinstance(contact, dict):
+                                return contact.get("url")
+                        if "@graph" in data:
+                            for item in data["@graph"]:
+                                result = find_apply(item)
+                                if result:
+                                    return result
+                    elif isinstance(data, list):
+                        for item in data:
+                            result = find_apply(item)
+                            if result:
+                                return result
+                    return None
+                url = find_apply(data)
+                if url and not url.startswith("https://www.linkedin.com"):
+                    return url
+            except Exception:
+                continue
+
+        return None  # Easy Apply or LinkedIn-only — no external URL
+    except Exception:
+        return None
+
+
 def extract_apply_url_deterministic(page) -> str | None:
     """Try known CSS patterns for apply buttons/links."""
     for sel in APPLY_SELECTORS:
@@ -556,6 +644,47 @@ def scrape_detail_page(page, url: str) -> dict:
             result["error"] = "timeout"
         else:
             result["error"] = err_str[:200]
+        result["elapsed"] = time.time() - t0
+        return result
+
+    # ── LinkedIn-specific handling ──────────────────────────────────────
+    # For LinkedIn URLs, extract the external ATS apply URL and mark as
+    # blocked_board_domain if no external URL exists (Easy Apply / internal).
+    if is_linkedin_url(url):
+        linkedin_apply = extract_linkedin_apply_url(page)
+        if linkedin_apply:
+            result["application_url"] = linkedin_apply
+
+        # Still extract the full description for scoring
+        intel = collect_detail_intelligence(page)
+
+        # Try JSON-LD for description
+        json_ld_result = extract_from_json_ld(intel)
+        if json_ld_result and json_ld_result.get("full_description"):
+            result["full_description"] = json_ld_result["full_description"]
+            if not result.get("application_url"):
+                result["application_url"] = json_ld_result.get("application_url")
+        else:
+            # Try CSS for description
+            desc = extract_description_deterministic(page)
+            if desc:
+                result["full_description"] = desc
+            else:
+                # Try LLM
+                llm_result = extract_with_llm(page, url)
+                result["full_description"] = llm_result.get("full_description")
+                if not result.get("application_url"):
+                    result["application_url"] = llm_result.get("application_url")
+
+        if result.get("application_url"):
+            result["status"] = "ok"
+            result["tier_used"] = 1
+        elif result.get("full_description"):
+            result["status"] = "partial"
+            result["tier_used"] = 2
+        else:
+            result["status"] = "error"
+            result["error"] = "linkedin: no description extracted"
         result["elapsed"] = time.time() - t0
         return result
 

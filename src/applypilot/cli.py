@@ -115,6 +115,12 @@ def run(
 
     stage_list = stages if stages else ["all"]
 
+    # If "discover" is listed alongside a specific discovery sub-stage
+    # (jobspy, workday, bigtech), remove "discover" — user is being specific
+    discover_sub_stages = {"jobspy", "workday", "bigtech"}
+    if "discover" in stage_list and discover_sub_stages & set(stage_list):
+        stage_list = [s for s in stage_list if s != "discover"]
+
     # Validate stage names
     for s in stage_list:
         if s != "all" and s not in VALID_STAGES:
@@ -144,6 +150,9 @@ def run(
         os.environ["LLM_PROVIDER"] = provider
     if model:
         os.environ["LLM_MODEL"] = model
+    # Default LLM_URL for local provider, overriding .env
+    if provider == "local":
+        os.environ["LLM_URL"] = "http://127.0.0.1:11434/v1"
 
     result = run_pipeline(
         stages=stage_list,

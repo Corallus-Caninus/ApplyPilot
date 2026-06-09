@@ -13,7 +13,7 @@ bash ~/Code/applypilot/start-chrome.sh
 ### Run the apply loop
 
 ```bash
-cd ~/Code/applypilot && python3 run_apply.py [--provider PROVIDER] [--workers N]
+cd ~/Code/applypilot && python3 run_apply.py [--provider PROVIDER] [--workers N] [--strategy STRATEGY]
 ```
 
 Starts the continuous apply loop. Picks the highest-scored unprocessed job from the queue, launches a Hermes AI agent to fill and submit the application, then repeats. Polls every 5s for new jobs. Ctrl+C once to skip current job, twice to stop.
@@ -22,6 +22,22 @@ Starts the continuous apply loop. Picks the highest-scored unprocessed job from 
   With more workers, multiple jobs are processed simultaneously. Each worker
   gets its own Chrome instance (ports 9515, 9516, ...) and independent Hermes agent.
   Start with 1, bump to 2-3 if you have the CPU/Chrome overhead.
+
+**`--strategy STRATEGY`** — Only apply to jobs from a specific discovery source:
+  - `bigtech` — Netflix, OpenAI, Anthropic, Spotify, Uber, Stripe, Databricks, Snowflake, Microsoft, Google, Amazon, Meta
+  - `jobspy` — general Indeed/LinkedIn/Google scraped jobs
+  - `workday_api` — corporate Workday career site scrapes
+  - Omit for all sources.
+
+  Combined with targeted discovery, this lets you run focused pipelines:
+  ```bash
+  # Discover only bigtech jobs, then apply only to those
+  bash run-ap.sh run discover bigtech
+  python3 run_apply.py --strategy bigtech
+
+  # Or using the local model shortcut
+  ./apply_local_llama.sh --strategy bigtech
+  ```
 
 **`--provider PROVIDER`** — Which model backend to use for the apply agent:
 
@@ -110,6 +126,19 @@ bash ~/Code/applypilot/run-ap.sh run discover
 ```
 Scrapes Indeed, LinkedIn, and 48+ corporate Workday career sites for new job listings. Jobs from Indeed that have a direct URL to the company's own ATS (Workday, Greenhouse, Lever, etc.) get stored with the company name as the apply destination — not "indeed" — so they bypass Indeed's bot blocking.
 
+**Targeted discovery:**
+```bash
+# Big tech only (Netflix, OpenAI, Anthropic, Spotify, Stripe, etc.)
+bash ~/Code/applypilot/run-ap.sh run discover bigtech
+
+# Workday career sites only
+bash ~/Code/applypilot/run-ap.sh run discover workday
+
+# General job boards (Indeed, LinkedIn, Google) only
+bash ~/Code/applypilot/run-ap.sh run discover jobspy
+```
+Jobs discovered via targeted discovery are tagged with a `strategy` value. Combined with `run_apply.py --strategy`, you can apply only to jobs from a specific source.
+
 ### Score jobs by fit
 
 ```bash
@@ -135,6 +164,15 @@ Navigates to each job URL with a browser and scrapes the full description and di
 bash ~/Code/applypilot/run-ap.sh run all
 ```
 Runs discover → enrich → score → tailor → cover → pdf in sequence.
+
+**Targeted pipeline (bigtech only):**
+```bash
+# Discover + score bigtech jobs only
+bash ~/Code/applypilot/run-ap.sh run discover bigtech score
+
+# Then apply only to bigtech jobs
+python3 run_apply.py --strategy bigtech
+```
 
 ### Check status
 

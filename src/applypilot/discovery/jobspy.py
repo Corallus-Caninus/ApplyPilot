@@ -75,46 +75,18 @@ def _scrape_with_retry(kwargs: dict, max_retries: int = 2, backoff: float = 5.0)
             else:
                 raise
 
+log = logging.getLogger(__name__)
+
 
 # -- Location filtering ------------------------------------------------------
 
-def _load_location_config(search_cfg: dict) -> tuple[list[str], list[str]]:
-    """Extract accept/reject location lists from search config.
+def _location_ok(location: str | None, accept: list[str] | None = None, reject: list[str] | None = None) -> bool:
+    """Check if a job location is remote-eligible using the unified filter.
 
-    Falls back to sensible defaults if not defined in the YAML.
+    Delegates to config.is_remote_location(), matching the bigtech behavior.
+    Accept/reject params are retained for backward compatibility but ignored.
     """
-    accept = search_cfg.get("location_accept", [])
-    reject = search_cfg.get("location_reject_non_remote", [])
-    return accept, reject
-
-
-def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> bool:
-    """Check if a job location passes the user's location filter.
-
-    Remote jobs are always accepted. Non-remote jobs must match an accept
-    pattern and not match a reject pattern.
-    """
-    if not location:
-        return True  # unknown location -- keep it, let scorer decide
-
-    loc = location.lower()
-
-    # Remote jobs always OK
-    if any(r in loc for r in ("remote", "anywhere", "work from home", "wfh", "distributed")):
-        return True
-
-    # Reject non-remote matches
-    for r in reject:
-        if r.lower() in loc:
-            return False
-
-    # Accept matches
-    for a in accept:
-        if a.lower() in loc:
-            return True
-
-    # No match -- reject unknown
-    return False
+    return config.is_remote_location(location)
 
 
 # -- Site derivation from direct URLs ---------------------------------------
@@ -405,7 +377,8 @@ def _clean_company_name(name: str) -> str:
 
 # -- DB storage (JobSpy DataFrame -> SQLite) ---------------------------------
 
-def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tuple[int, int]:
+def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str,
+                         strategy: str = "jobspy") -> tuple[int, int]:
     """Store JobSpy DataFrame results into the DB. Returns (new, existing)."""
     now = datetime.now(timezone.utc).isoformat()
     new = 0
@@ -442,7 +415,7 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tup
         if is_remote:
             location_str = f"{location_str} (Remote)" if location_str else "Remote"
 
-        strategy = "jobspy"
+        # strategy is passed as parameter from caller
 
         # If JobSpy gave us a full description, promote it directly
         full_description = None
@@ -491,8 +464,6 @@ def _run_one_search(
     proxy_config: dict | None,
     defaults: dict,
     max_retries: int,
-    accept_locs: list[str],
-    reject_locs: list[str],
     glassdoor_map: dict,
 ) -> dict:
     """Run a single search query and store results in DB."""
@@ -515,17 +486,12 @@ def _run_one_search(
             "search_term": s["query"],
             "location": s["location"],
             "results_wanted": results_per_site,
-            "hours_old": hours_old,
-            "description_format": "markdown",
             "country_indeed": defaults.get("country_indeed", "usa"),
-            "verbose": 0,
         }
         if s.get("remote"):
             kwargs["is_remote"] = True
         if proxy_config:
             kwargs["proxies"] = [proxy_config["jobspy"]]
-        if "linkedin" in other_sites:
-            kwargs["linkedin_fetch_description"] = True
         try:
             df = _scrape_with_retry(kwargs, max_retries=max_retries)
             all_dfs.append(df)
@@ -539,9 +505,6 @@ def _run_one_search(
             "search_term": s["query"],
             "location": gd_location,
             "results_wanted": results_per_site,
-            "hours_old": hours_old,
-            "description_format": "markdown",
-            "verbose": 0,
         }
         if s.get("remote"):
             gd_kwargs["is_remote"] = True
@@ -571,12 +534,15 @@ def _run_one_search(
     before = len(df)
     df = df[df.apply(lambda row: _location_ok(
         str(row.get("location", "")) if str(row.get("location", "")) != "nan" else None,
-        accept_locs, reject_locs,
+    ) and not config.is_sales_job(
+        str(row.get("title", "")) if str(row.get("title", "")) != "nan" else None,
+    ) and config.is_computer_engineering_role(
+        str(row.get("title", "")) if str(row.get("title", "")) != "nan" else None,
     ), axis=1)]
     filtered = before - len(df)
 
     conn = get_connection()
-    new, existing = store_jobspy_results(conn, df, s["query"])
+    new, existing = store_jobspy_results(conn, df, s["query"], strategy=s.get("strategy", "jobspy"))
 
     msg = f"[{label}] {before} results -> {new} new, {existing} dupes"
     if filtered:
@@ -622,9 +588,6 @@ def search_jobs(
 
     if proxy_config:
         kwargs["proxies"] = [proxy_config["jobspy"]]
-
-    if "linkedin" in sites:
-        kwargs["linkedin_fetch_description"] = True
 
     try:
         df = scrape_jobs(**kwargs)
@@ -675,7 +638,6 @@ def _full_crawl(
     locs = search_cfg.get("locations", [])
     defaults = search_cfg.get("defaults", {})
     glassdoor_map = search_cfg.get("glassdoor_location_map", {})
-    accept_locs, reject_locs = _load_location_config(search_cfg)
 
     if tiers:
         queries = [q for q in queries if q.get("tier") in tiers]
@@ -710,7 +672,7 @@ def _full_crawl(
         result = _run_one_search(
             s, sites, results_per_site, hours_old,
             proxy_config, defaults, max_retries,
-            accept_locs, reject_locs, glassdoor_map,
+            glassdoor_map,
         )
         completed += 1
         total_new += result["new"]

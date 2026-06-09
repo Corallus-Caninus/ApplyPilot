@@ -175,8 +175,8 @@ DEFAULTS = {
 # Highest priority first — falls through on failure.
 # See run_apply.py docstring for model descriptions.
 DEFAULT_PROVIDER_CHAIN = [
-    ("opencode-zen", "nemotron-3-super-free"),
     ("openrouter", "google/gemma-4-31b-it:free"),
+    ("opencode-zen", "nemotron-3-super-free"),
     ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
     ("openrouter", "qwen/qwen3-coder:free"),
     ("openrouter", "nousresearch/hermes-3-llama-3.1-405b:free"),
@@ -274,8 +274,134 @@ def check_tier(required: int, feature: str) -> None:
         f"Current tier: {TIER_LABELS.get(current, f'Tier {current}')} (Tier {current})."
     )
     if missing:
-        _console.print("\n[yellow]Missing:[/yellow]")
+        _console.print("\\n[yellow]Missing:[/yellow]")
         for m in missing:
             _console.print(f"  - {m}")
-    _console.print()
-    raise SystemExit(1)
+
+
+def is_remote_location(location: str | None) -> bool:
+    """Check if a location string indicates remote or broad-eligibility work.
+
+    Mirrors the bigtech direct_scrapers filter: only remote-flagged or
+    broad-US-eligible jobs pass. This is the unified filter used across all
+    discovery scanners (bigtech, jobspy, workday, smartextract).
+    """
+    if not location:
+        return True  # unknown location — keep it
+    loc_lower = location.lower()
+    if "remote" in loc_lower:
+        return True
+    if "united states" in loc_lower:
+        return True  # broad US eligibility
+    if "multiple locations" in loc_lower:
+        return True  # multiple offices — often remote-flexible
+    if "anywhere" in loc_lower:
+        return True
+    if "work from home" in loc_lower or "wfh" in loc_lower or "distributed" in loc_lower:
+        return True
+    return False
+
+
+def is_sales_job(title: str | None) -> bool:
+    """Check if a job title indicates a sales/business role — filter these out."""
+    if not title:
+        return False
+    t = title.lower()
+    sales_keywords = [
+        "account executive", "sales", "account manager",
+        "business development", "salesforce", "revenue",
+        "customer success", "partner manager", "sales operations",
+        "sales representative", "sales director", "sales leader",
+        "channel sales", "sales manager", "inside sales",
+        "sales engineer", "solutions consultant", "sales consultant",
+        "sales specialist", "sales support", "growth manager",
+        "go-to-market", "gtm", "commercial director",
+    ]
+    for kw in sales_keywords:
+        if kw in t:
+            return True
+    return False
+
+
+def is_computer_engineering_role(title: str | None, description: str | None = None) -> bool:
+    """Check if a job is a computer engineering role (software, hardware, AI/ML, etc.).
+
+    Checks title primarily. For ambiguous titles, falls back to description.
+    Used at discovery time so only relevant roles enter the DB.
+    """
+    if not title:
+        return False
+
+    t = title.lower()
+
+    # Positive keywords — these identify computer engineering roles
+    eng_keywords = [
+        # Core software
+        "software", "developer", "programmer", "engineer", "engineering",
+        "full stack", "fullstack", "backend", "back-end", "frontend", "front-end",
+        # Infrastructure
+        "devops", "sre", "site reliability", "platform",
+        "infrastructure", "cloud", "systems engineer",
+        # Data/AI/ML
+        "data engineer", "data scientist", "data science",
+        "ai engineer", "ml engineer", "machine learning",
+        "deep learning", "ai/ml", "llm", "nlp", "computer vision",
+        "research scientist", "applied scientist", "research engineer",
+        # Hardware/Embedded
+        "hardware", "pcb", "pcb layout", "edl", "fpga", "asic", "vlsi",
+        "embedded", "firmware", "verilog", "vhdl", "circuit", "electronics",
+        "soc", "chip design", "semiconductor",
+        # Architecture
+        "architect", "solutions architect",
+        # Test/QA
+        "qa engineer", "test engineer", "sdet", "automation engineer",
+        "quality engineer", "quality assurance engineer",
+        # Specialized
+        "build engineer", "release engineer", "tools engineer",
+        "performance engineer", "reliability engineer",
+        "security engineer", "network engineer",
+        "technical lead", "tech lead",
+    ]
+
+    # Reject these even if a keyword matches — non-engineering roles
+    # that happen to contain engineering keywords (e.g. "Sales Engineer")
+    reject_keywords = [
+        "account executive", "account manager", "business development",
+        "salesforce", "customer success", "partner manager",
+        "sales operations", "sales director", "sales leader",
+        "channel sales", "inside sales",
+        "sales consultant", "sales specialist",
+        "growth manager", "go-to-market", "gtm", "commercial",
+        "recruiter", "hr ", "human resources", "talent acquisition",
+        "marketing", "marketing manager",
+        "finance", "financial analyst", "accountant", "auditor",
+        "nurse", "doctor", "physician", "medical assistant",
+        "teacher", "professor", "lecturer", "instructor",
+        "vp ", "vice president", "chief", "cfo", "ceo", "coo", "cto",
+        "intern", "internship", "co-op",
+    ]
+
+    # Check positive keywords first
+    matched_eng = False
+    for kw in eng_keywords:
+        if kw in t:
+            matched_eng = True
+            break
+
+    # Check reject keywords — only reject if no engineering keyword matched
+    if not matched_eng:
+        for kw in reject_keywords:
+            if kw in t:
+                return False
+
+    if matched_eng:
+        return True
+
+    # Ambiguous title with description — check description for engineering keywords
+    if description:
+        d = description.lower()
+        for kw in eng_keywords:
+            if kw in d:
+                return True
+
+    return False

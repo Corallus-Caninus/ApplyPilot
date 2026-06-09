@@ -48,29 +48,12 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 # -- Location filtering -------------------------------------------------------
 
-def _load_location_filter(search_cfg: dict | None = None):
-    """Load location accept/reject lists from search config."""
-    if search_cfg is None:
-        search_cfg = config.load_search_config()
-    accept = search_cfg.get("location_accept", [])
-    reject = search_cfg.get("location_reject_non_remote", [])
-    return accept, reject
+def _location_ok(location: str | None, accept: list[str] | None = None, reject: list[str] | None = None) -> bool:
+    """Check if a job location is remote-eligible using the unified filter.
 
-
-def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> bool:
-    """Check if a job location passes the user's location filter."""
-    if not location:
-        return True
-    loc = location.lower()
-    if any(r in loc for r in ("remote", "anywhere", "work from home", "wfh", "distributed")):
-        return True
-    for r in reject:
-        if r.lower() in loc:
-            return False
-    for a in accept:
-        if a.lower() in loc:
-            return True
-    return False
+    Delegates to config.is_remote_location(), matching the bigtech behavior.
+    """
+    return config.is_remote_location(location)
 
 
 # -- Site configuration from YAML --------------------------------------------
@@ -90,8 +73,6 @@ def _store_jobs_filtered(
     jobs: list[dict],
     site: str,
     strategy: str,
-    accept_locs: list[str],
-    reject_locs: list[str],
 ) -> tuple[int, int]:
     """Store jobs with location filtering. Returns (new, existing)."""
     now = datetime.now(timezone.utc).isoformat()
@@ -103,7 +84,13 @@ def _store_jobs_filtered(
         url = job.get("url")
         if not url:
             continue
-        if not _location_ok(job.get("location"), accept_locs, reject_locs):
+        if not _location_ok(job.get("location")):
+            filtered += 1
+            continue
+        if config.is_sales_job(job.get("title")):
+            filtered += 1
+            continue
+        if not config.is_computer_engineering_role(job.get("title"), job.get("description")):
             filtered += 1
             continue
         try:
@@ -1014,8 +1001,6 @@ def build_scrape_targets(
 
 def _run_all(
     targets: list[dict],
-    accept_locs: list[str],
-    reject_locs: list[str],
     workers: int = 1,
 ) -> dict:
     """Run smart extract on all targets.
@@ -1037,8 +1022,7 @@ def _run_all(
         jobs = r.get("jobs", [])
         if jobs:
             new, existing = _store_jobs_filtered(conn, jobs, target["name"],
-                                                  r.get("strategy", "?"),
-                                                  accept_locs, reject_locs)
+                                                  r.get("strategy", "?"))
             total_new += new
             total_existing += existing
             log.info("DB: +%d new, %d already existed", new, existing)
@@ -1102,7 +1086,6 @@ def run_smart_extract(
         Dict with stats: total_new, total_existing, passed, total.
     """
     search_cfg = config.load_search_config()
-    accept_locs, reject_locs = _load_location_filter(search_cfg)
 
     targets = build_scrape_targets(sites=sites, search_cfg=search_cfg)
 
@@ -1115,4 +1098,4 @@ def run_smart_extract(
     log.info("Sites: %d searchable, %d static | Total targets: %d (workers=%d)",
              search_sites, static_sites, len(targets), workers)
 
-    return _run_all(targets, accept_locs, reject_locs, workers=workers)
+    return _run_all(targets, workers=workers)

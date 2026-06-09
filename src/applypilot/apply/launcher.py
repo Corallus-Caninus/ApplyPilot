@@ -140,7 +140,8 @@ def detect_provider_error(output: str) -> bool:
 
 def _build_provider_cmd(hermes_path: str, provider: str, model: str,
                         agent_prompt: str,
-                        worker_id: int = 0) -> tuple[list[str], dict]:
+                        worker_id: int = 0,
+                        chain_len: int = 1) -> tuple[list[str], dict]:
     """Build Hermes CLI command + environment for a specific provider/model.
 
     Always creates a temporary Hermes config that sets ``agent.api_max_retries: 1``
@@ -165,18 +166,42 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
             _cfg: dict = _yaml.safe_load(_fc) or {}
     else:
         _cfg = {}
-    _cfg.setdefault("agent", {})["api_max_retries"] = 1
+    # Allow retries for transient errors (429 rate limits, etc.)
+    # The launcher's own fallback chain handles permanent provider failures,
+    # so Hermes should retry a few times before giving up on a provider.
+    # When there's only one provider in the chain, retry effectively forever
+    # (999999) since exiting means losing the session and all form progress.
+    _cfg.setdefault("agent", {})["api_max_retries"] = 999999 if chain_len <= 1 else 3
+
+    # Restrict tools to only what the apply agent needs — this shrinks the
+    # system prompt significantly (fewer tool schema definitions = less context).
+    # The agent only needs: browser (MCP Playwright), terminal (scripts),
+    # file (reading creds), and vision (CAPTCHA reading).
+    _cfg.setdefault("agent", {})["disabled_toolsets"] = [
+        "browser", "browser-cdp", "clarify", "code_execution", "computer_use",
+        "cronjob", "delegation", "discord", "discord_admin",
+        "feishu_doc", "feishu_drive", "homeassistant", "image_gen",
+        "kanban", "memory", "messaging", "moa", "session_search",
+        "skills", "todo", "tts", "video", "video_gen",
+        "vision", "web",
+    ]
+    # Prevent NixOS read-only filesystem errors — lazy installs try to
+    # write to the Nix store via uv pip install.
+    _cfg.setdefault("security", {})["allow_lazy_installs"] = False
 
     cmd = [hermes_path, "chat", "-v", "--pass-session-id"]
     env = os.environ.copy()
     env.pop("CLAUDECODE", None)
     env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+    # Raise API request timeout from 1800s (30 min) default to 3600s (1 hour)
+    # to prevent client-side disconnection mid-stream on slow local models.
+    env["HERMES_API_TIMEOUT"] = "3600"
 
     if provider:
         env["LLM_PROVIDER"] = provider
 
     if provider == "opencode" or provider == "opencode-zen":
-        cmd += ["-m", model or "deepseek-v4-flash-free"]
+        cmd += ["-m", model or "nemotron-3-super-free"]
         env["HERMES_MODE"] = "zen"
     elif provider == "opencode-go":
         cmd += ["-m", model or "deepseek-v4-flash"]
@@ -194,6 +219,65 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
     elif provider == "openrouter":
         cmd += ["--provider", "openrouter"]
         cmd += ["-m", model or "openrouter/owl-alpha"]
+    elif provider == "local":
+        _local_url = os.environ.get("LLM_URL", "http://localhost:11434/v1")
+        _local_key = os.environ.get("LLM_API_KEY", "")
+        _cfg["model"] = {
+            "provider": "custom",
+            "base_url": _local_url,
+            "default": model or "qwen3.5:4b",
+        }
+        if _local_key:
+            _cfg["model"]["api_key"] = _local_key
+        env.pop("HERMES_MODE", None)
+        cmd += ["-m", model or "qwen3.5:4b"]
+        # Set context length based on model size — MI25 has 16GB VRAM.
+        # 4B Q4 (~3.4GB) can handle 128K+; 9B Q4 (~5.6GB) fits 128K with Q8_0 KV cache.
+        _model_name = (model or "qwen3.5:4b").lower()
+        if "35b" in _model_name or "27b" in _model_name:
+            _ctx = 16384
+        elif "9b" in _model_name or "8b" in _model_name:
+            _ctx = 64000
+        else:
+            _ctx = 64000
+        _cfg["model"]["context_length"] = _ctx
+        # For local models with large context (128K): delay compression until
+        # near the context limit, preserve most of the conversation.
+        # Re-enable context compression to keep sessions alive past 64K
+        # This costs ~1-2 minutes per compression cycle but preserves all
+        # form-filling progress instead of forcing a continuation restart.
+        _cfg.setdefault("agent", {}).setdefault("context_compressor", {})
+        _cfg["agent"]["context_compressor"]["enabled"] = True
+        _cfg["agent"]["context_compressor"]["threshold_tokens"] = 45000  # fire at ~70%
+        _cfg["agent"]["context_compressor"]["target_ratio"] = 0.3       # compress to 30%
+        _cfg["agent"]["context_compressor"]["tail_budget"] = 16000       # keep last 16K tokens
+        # Also enable Hermes' built-in compression with sane thresholds
+        _cfg["compression"] = {
+            "enabled": True,
+            "threshold": 0.7,         # fire at 70% (~45K of 64K)
+            "target_ratio": 0.3,      # compress to 30%
+            "protect_last_n": 20,
+            "protect_first_n": 3,
+            "hygiene_hard_message_limit": 200,
+            "abort_on_summary_failure": False,
+        }
+        # Register Playwright MCP server — Hermes manages its lifecycle
+        _cfg.setdefault("mcp_servers", {}).setdefault("playwright", {
+            "command": "npx",
+            "args": ["-y", "@playwright/mcp@latest",
+                     "--cdp-endpoint=http://localhost:9515",
+                     "--viewport-size=1280x900"],
+            "timeout": 300,
+            "connect_timeout": 30,
+        })
+        # Register credential + email tools as a native MCP server
+        _mcp_py = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../applypilot_mcp_server.py"))
+        if os.path.exists(_mcp_py):
+            _cfg.setdefault("mcp_servers", {})["applypilot"] = {
+                "command": sys.executable,
+                "args": [_mcp_py],
+                "timeout": 30,
+            }
     else:
         if provider:
             cmd += ["--provider", provider]
@@ -210,6 +294,16 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
     # the global config, so the user's personal Go sessions are unaffected.
     if provider == "opencode-zen":
         _cfg.setdefault("model", {})["base_url"] = "https://opencode.ai/zen/v1"
+    # ── ApplyPilot tweaks to save tokens and avoid hard-stops ─────────
+    # Disable holographic memory (fact retrieval/creation wastes tokens)
+    _cfg.setdefault("memory", {})["memory_enabled"] = False
+    _cfg.setdefault("memory", {})["user_profile_enabled"] = False
+    _cfg.setdefault("memory", {})["nudge_interval"] = 0
+    # Disable auto-extract in memory plugin (fork+fact_add per turn)
+    _cfg.setdefault("plugins", {}).pop("hermes-memory-store", None)
+    # Disable tool-loop hard-stop — apply agents need many iterations
+    _cfg.setdefault("tool_loop_guardrails", {})["hard_stop_enabled"] = False
+    # ──────────────────────────────────────────────────────────────────
     _hermes_home = os.path.join(str(config.APP_DIR), f"hermes-home-{worker_id}")
     os.makedirs(_hermes_home, exist_ok=True)
     _tmp_cfg = os.path.join(_hermes_home, "config.yaml")
@@ -290,6 +384,14 @@ def _probe_provider(provider: str, model: str) -> bool:
             )
             resp = urllib.request.urlopen(req, timeout=10)
             return resp.status == 200
+        elif provider == "local":
+            _local_url = os.environ.get("LLM_URL", "http://localhost:11434/v1").rstrip("/")
+            req = urllib.request.Request(
+                f"{_local_url}/models",
+                method="GET",
+            )
+            resp = urllib.request.urlopen(req, timeout=5)
+            return resp.status == 200
         else:
             return False
     except Exception:
@@ -361,6 +463,127 @@ if platform.system() != "Windows":
 # MCP config
 # ---------------------------------------------------------------------------
 
+def _capture_fields_async(worker_id: int, session_id: str = "") -> None:
+    """Extract filled form fields from the agent's state.db and save to field cache.
+    
+    Queries the Hermes session database for all mcp_playwright_browser_fill_form
+    tool calls and extracts the field name→value pairs the agent actually used.
+    If session_id is empty, uses the most recent session with fill_form data.
+    Stores in the field_cache table of applypilot.db.
+    """
+    hermes_home = os.path.join(str(config.APP_DIR), f"hermes-home-{worker_id}")
+    state_db = os.path.join(hermes_home, "state.db")
+    field_db = os.path.join(str(config.APP_DIR), "applypilot.db")
+    if not os.path.exists(state_db):
+        return
+
+    def _get_session(cur):
+        if session_id:
+            return session_id
+        # Find the most recent session with fill_form or select_option data
+        cur.execute("""SELECT session_id FROM messages 
+            WHERE role='assistant' AND tool_calls IS NOT NULL
+              AND (tool_calls LIKE '%fill_form%' OR tool_calls LIKE '%select_option%')
+            ORDER BY id DESC LIMIT 1""")
+        row = cur.fetchone()
+        return row[0] if row else ""
+
+    def _do_capture():
+        time.sleep(2)  # Let agent finish writing to DB
+        try:
+            import sqlite3, json
+            conn = sqlite3.connect(state_db)
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            sid = _get_session(cur)
+            if not sid:
+                conn.close()
+                return
+
+            cur.execute("""SELECT tool_calls FROM messages 
+                WHERE session_id=? AND role='assistant' AND tool_calls IS NOT NULL 
+                  AND (tool_calls LIKE '%fill_form%' OR tool_calls LIKE '%select_option%')
+                ORDER BY id""", (sid,))
+            rows = cur.fetchall()
+            conn.close()
+
+            if not rows:
+                return
+
+            import re
+            norm_re = re.compile(r"[*\s_\-]+")
+            def norm(s):
+                return norm_re.sub("", s).strip().lower()
+
+            now = __import__("datetime").datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            new_count = 0
+            # Load existing keys from the DB to avoid duplicates
+            existing = set()
+            dc = None
+            try:
+                dc = sqlite3.connect(field_db)
+                for r2 in dc.execute("SELECT label FROM field_cache"):
+                    existing.add(r2[0])
+            except Exception:
+                pass
+
+            for row in rows:
+                try:
+                    data = json.loads(row["tool_calls"])
+                    for call in data:
+                        fn = call.get("function", {})
+                        name = fn.get("name", "")
+                        args_raw = fn.get("arguments", "{}")
+                        if isinstance(args_raw, str):
+                            args = json.loads(args_raw)
+                        else:
+                            args = args_raw
+                        if "select_option" in name:
+                            # select_option: {"target": "e65", "values": ["Remote"]}
+                            vals = args.get("values", [])
+                            if vals:
+                                key = norm(args.get("target", ""))
+                                if key and key not in existing:
+                                    dc.execute(
+                                        "INSERT OR IGNORE INTO field_cache (label, value, created_at, updated_at, source_session) VALUES (?, ?, ?, ?, ?)",
+                                        (key, vals[0].strip(), now, now, sid),
+                                    )
+                                    if dc.rowcount:
+                                        existing.add(key)
+                                        new_count += 1
+                        else:
+                            # fill_form: {"fields": [{"name": "First Name", "value": "Josh"}]}
+                            fields = args.get("fields", [])
+                            if isinstance(fields, str):
+                                fields = json.loads(fields)
+                            for f in fields:
+                                label = f.get("name") or f.get("element", "")
+                                val = f.get("value", "")
+                                key = norm(label)
+                                if key and val and key not in existing:
+                                    try:
+                                        dc.execute(
+                                            "INSERT OR IGNORE INTO field_cache (label, value, created_at, updated_at, source_session) VALUES (?, ?, ?, ?, ?)",
+                                            (key, val.strip(), now, now, sid),
+                                        )
+                                        if dc.rowcount:
+                                            existing.add(key)
+                                            new_count += 1
+                                    except Exception:
+                                        pass
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+            if new_count:
+                dc.commit()
+            if dc:
+                dc.close()
+        except Exception:
+            pass  # best-effort
+
+    t = threading.Thread(target=_do_capture, daemon=True)
+    t.start()
+
 def _make_mcp_config(cdp_port: int) -> dict:
     """Build MCP config dict for a specific CDP port."""
     return {
@@ -386,13 +609,14 @@ def _make_mcp_config(cdp_port: int) -> dict:
 # ---------------------------------------------------------------------------
 
 def acquire_job(target_url: str | None = None, min_score: int = 7,
-                worker_id: int = 0) -> dict | None:
+                worker_id: int = 0, strategy: str | None = None) -> dict | None:
     """Atomically acquire the next job to apply to.
 
     Args:
         target_url: Apply to a specific URL instead of picking from queue.
         min_score: Minimum fit_score threshold.
         worker_id: Worker claiming this job (for tracking).
+        strategy: Only acquire jobs from this discovery strategy (bigtech, jobspy, workday_api).
 
     Returns:
         Job dict or None if the queue is empty.
@@ -408,7 +632,7 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                        fit_score, location, full_description, cover_letter_path
                 FROM jobs
                 WHERE (url = ? OR application_url = ? OR application_url LIKE ? OR url LIKE ?)
-                  AND apply_status != 'in_progress'
+                  AND (apply_status IS NULL OR apply_status != 'in_progress')
                 LIMIT 1
             """, (target_url, target_url, like, like)).fetchone()
         else:
@@ -422,18 +646,35 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                 params.extend(blocked_sites)
             url_clauses = ""
             if blocked_patterns:
-                url_clauses = " ".join(f"AND url NOT LIKE ?" for _ in blocked_patterns)
+                url_clauses = " ".join(f"AND COALESCE(application_url, url) NOT LIKE ?" for _ in blocked_patterns)
                 params.extend(blocked_patterns)
+            # Also block board-domain URLs at the SQL level so they're never picked up
+            url_clauses += " AND COALESCE(application_url, url) NOT LIKE '%linkedin.com/jobs/%'"
+            url_clauses += " AND COALESCE(application_url, url) NOT LIKE '%indeed.com%'"
+            url_clauses += " AND COALESCE(application_url, url) NOT LIKE '%glassdoor.com%'"
+            url_clauses += " AND COALESCE(application_url, url) NOT LIKE '%ziprecruiter.com%'"
+
+            strategy_clause = ""
+            if strategy:
+                strategy_clause = "AND strategy = ? "
+                params.append(strategy)
+
             row = conn.execute(f"""
                 SELECT url, title, site, application_url, tailored_resume_path,
-                       fit_score, location, full_description, cover_letter_path
+                       fit_score, location, full_description, cover_letter_path,
+                       last_session_id
                 FROM jobs
                 WHERE (apply_status IS NULL OR apply_status = 'failed')
                   AND (apply_attempts IS NULL OR apply_attempts < ?)
                   AND (fit_score >= ? OR fit_score IS NULL)
                   {site_clause}
                   {url_clauses}
-                ORDER BY fit_score DESC, RANDOM()
+                  {strategy_clause}
+                ORDER BY fit_score DESC NULLS LAST,
+                  -- Round-robin by site: pick the site least recently attempted
+                  (SELECT COALESCE(MAX(j2.last_attempted_at), '1970-01-01')
+                   FROM jobs j2 WHERE j2.site = jobs.site) ASC,
+                  RANDOM()
                 LIMIT 1
             """, [config.DEFAULTS["max_apply_attempts"], min_score] + params).fetchone()
 
@@ -469,6 +710,19 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                     conn.commit()
                     logger.info("Skipping blocked board domain: %s", apply_url[:80])
                     return None
+
+        # Skip jobs where the default resume PDF doesn't exist (can't apply without a resume)
+        default_resume = config.RESUME_PDF_PATH
+        if not default_resume.exists():
+            fallback = Path(os.path.expanduser("~/Code/JobBot_Zip/JoshWard_Resume.pdf"))
+            if not fallback.exists():
+                conn.execute(
+                    "UPDATE jobs SET apply_status = 'failed', apply_error = 'no_resume_pdf' WHERE url = ?",
+                    (row["url"],),
+                )
+                conn.commit()
+                logger.warning("No resume PDF found at %s or fallback", default_resume)
+                return None
 
         now = datetime.now(timezone.utc).isoformat()
         conn.execute("""
@@ -530,7 +784,8 @@ def gen_prompt(target_url: str, min_score: int = 7,
     Returns:
         Path to the generated prompt file, or None if no job found.
     """
-    job = acquire_job(target_url=target_url, min_score=min_score, worker_id=worker_id)
+    job = acquire_job(target_url=target_url, min_score=min_score, worker_id=worker_id,
+                      strategy=None)
     if not job:
         return None
 
@@ -553,7 +808,7 @@ def gen_prompt(target_url: str, min_score: int = 7,
     prompt_file.write_text(prompt, encoding="utf-8")
 
     # Write MCP config for reference
-    port = BASE_CDP_PORT + worker_id
+    port = 9515 + worker_id
     mcp_path = config.APP_DIR / f".mcp-apply-{worker_id}.json"
     mcp_path.write_text(json.dumps(_make_mcp_config(port)), encoding="utf-8")
 
@@ -607,6 +862,59 @@ def reset_failed() -> int:
 # Per-job execution
 # ---------------------------------------------------------------------------
 
+def _save_session_id(url: str, session_id: str | None) -> None:
+    """Persist the last Hermes session ID for a job so retries can pull history."""
+    if not session_id:
+        return
+    try:
+        conn = get_connection()
+        conn.execute(
+            "UPDATE jobs SET last_session_id = ? WHERE url = ?",
+            (session_id, url),
+        )
+        conn.commit()
+    except Exception:
+        pass  # best-effort save
+
+
+def _get_recent_history(session_id: str, worker_id: int = 0,
+                        max_turns: int = 5) -> str:
+    """Read last N user+assistant turns from a Hermes session.
+
+    Only user and assistant roles are included (tool messages — browser
+    DOM dumps — are excluded as noise). Each message is capped at 600
+    chars to keep the block compact (~3-5K tokens total).
+    """
+    state_db = os.path.join(str(config.APP_DIR), f"hermes-home-{worker_id}", "state.db")
+    if not os.path.exists(state_db):
+        return ""
+    try:
+        import sqlite3 as _sqlite3
+        conn = _sqlite3.connect(state_db)
+        rows = conn.execute("""
+            SELECT role, content FROM messages
+            WHERE session_id = ?
+              AND role IN ('user', 'assistant')
+            ORDER BY id DESC
+            LIMIT ?
+        """, (session_id, max_turns * 2)).fetchall()
+        conn.close()
+    except Exception:
+        return ""
+
+    if not rows:
+        return ""
+
+    rows.reverse()
+    lines = ["--- PRIOR SESSION (recent turns) ---"]
+    for role, content in rows:
+        label = "User" if role == "user" else "Assistant"
+        excerpt = content[:600]
+        lines.append(f"{label}: {excerpt}")
+    lines.append("--- END PRIOR SESSION ---")
+    return "\n\n".join(lines)
+
+
 def run_job(job: dict, port: int, worker_id: int = 0,
             provider_chain: list | None = None,
             dry_run: bool = False) -> tuple[str, int]:
@@ -627,17 +935,23 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 
     # Pre-flight: wait until at least one provider is available.
     # Don't skip the job — loop until the prober finds something.
+    # NOTE: Do NOT filter or reassign provider_chain here — chain_len must
+    # stay intact so _build_provider_cmd sets api_max_retries correctly (3
+    # for multi-provider chains, not 999999 which would cause infinite retry).
     while True:
-        available = []
+        any_available = False
         for prov, mod in provider_chain:
             if not prov:
-                available.append((prov, mod))
-            elif prov == "openrouter" and _probe_provider(prov, mod):
-                available.append((prov, mod))
-            elif prov != "openrouter":
-                available.append((prov, mod))
-        if available:
-            provider_chain = available
+                any_available = True
+                break
+            if prov == "openrouter":
+                if _probe_provider(prov, mod):
+                    any_available = True
+                    break
+            else:
+                any_available = True
+                break
+        if any_available:
             break
         # All providers down — wait and retry
         if worker_id == 0:
@@ -645,19 +959,34 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         import time as _time
         _time.sleep(30)
 
-    # Read tailored resume text
+    # Read resume text — use default honest resume
     resume_path = job.get("tailored_resume_path")
-    txt_path = Path(resume_path).with_suffix(".txt") if resume_path else None
-    resume_text = ""
-    if txt_path and txt_path.exists():
-        resume_text = txt_path.read_text(encoding="utf-8")
+    if resume_path:
+        txt_path = Path(resume_path).with_suffix(".txt")
+        resume_text = txt_path.read_text(encoding="utf-8") if txt_path.exists() else ""
+    else:
+        # Fall back to default resume text
+        default_txt = config.RESUME_PDF_PATH.with_suffix(".txt")
+        resume_text = default_txt.read_text(encoding="utf-8") if default_txt.exists() else ""
 
-    # Build the prompt
+    # Build the prompt — append continuation history if this is a retry
     agent_prompt = prompt_mod.build_prompt(
         job=job,
         tailored_resume=resume_text,
         dry_run=dry_run,
     )
+    last_session_id = job.get("last_session_id")
+    if last_session_id:
+        history = _get_recent_history(last_session_id, worker_id, max_turns=20)
+        if history:
+            continuation = (
+                "\n\n== CONTINUATION (prior session lost) ==\n"
+                "This is a follow-up to a prior session whose context was lost.\n"
+                "The browser still has the application page open. Do NOT restart —\n"
+                "snapshot the page, check what's already filled, and continue.\n"
+                "Do NOT re-navigate or re-upload the resume.\n\n"
+            )
+            agent_prompt = agent_prompt + continuation + history
 
     # Write per-worker MCP config
     mcp_config_path = config.APP_DIR / f".mcp-apply-{worker_id}.json"
@@ -720,8 +1049,11 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         start = time.time()
         proc = None
 
-        cmd, env = _build_provider_cmd(hermes_path, provider, model, agent_prompt, worker_id=worker_id)
-        if session_id:
+        cmd, env = _build_provider_cmd(hermes_path, provider, model, agent_prompt, worker_id=worker_id, chain_len=chain_len)
+        # Only resume sessions for multi-provider chains (provider switching).
+        # For single-provider (local model), start fresh every retry so context
+        # doesn't bloat with stale history from dead-end sessions.
+        if session_id and chain_len > 1:
             cmd += ["--resume", session_id]
         env["LLM_PROVIDER"] = provider
 
@@ -825,13 +1157,32 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             if result_line:
                 status_key, display_status = result_line
 
-                # Check if the result is actually a provider error disguised as RESULT:FAILED
-                if status_key.startswith("failed:") and detect_provider_error(output):
+                # Check if the result is actually a provider error disguised as RESULT:FAILED.
+                # Only override when the agent gave a generic reason (not a specific eligibility
+                # decision like not_eligible_location / not_eligible_role / not_eligible_work_auth).
+                # The post-processing phase (title gen, fact extraction) may produce auxiliary
+                # error messages (e.g. OpenRouter 401 fallback) that are NOT job failures.
+                _AGENT_DECISIONS = {"not_eligible_location", "not_eligible_role",
+                                    "not_eligible_work_auth", "not_eligible_salary",
+                                    "already_applied", "not_a_job_application",
+                                    "sso_required", "account_required",
+                                    "page_error", "site_blocked"}
+                _reason = status_key.split(":", 1)[-1] if ":" in status_key else ""
+                if (status_key.startswith("failed:")
+                    and _reason not in _AGENT_DECISIONS
+                    and detect_provider_error(output)):
                     _last_error_time = time.time()
                     if chain_idx < chain_len - 1:
                         add_event(f"[W{worker_id}] {label} provider error (fallback #{chain_idx + 2})")
                         chain_idx += 1
                         continue  # try next provider
+                    elif chain_len <= 1:
+                        # Single-provider: never give up — keep retrying forever
+                        _last_error_time = time.time()
+                        add_event(f"[W{worker_id}] {label} provider error — retrying same provider in 10s")
+                        chain_idx = 0
+                        time.sleep(10)
+                        continue
                     # All providers exhausted — wrap around to first and retry
                     chain_idx = 0
                     add_event(f"[W{worker_id}] All providers exhausted — wrapping to first in 10s")
@@ -843,6 +1194,9 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                     add_event(f"[W{worker_id}] APPLIED via {label} ({elapsed}s): {job['title'][:30]}")
                     update_state(worker_id, status="applied",
                                  last_action=f"APPLIED via {label} ({elapsed}s)")
+                    # Auto-capture form fields from the browser for future autofill
+                    _capture_fields_async(worker_id, session_id or "")
+                    _save_session_id(job["url"], session_id)
                     return "applied", duration_ms
 
                 PROMOTE_TO_STATUS = {"captcha", "expired", "login_issue"}
@@ -850,11 +1204,13 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                     add_event(f"[W{worker_id}] {display_status.upper()} ({elapsed}s): {job['title'][:30]}")
                     update_state(worker_id, status=display_status,
                                  last_action=f"{display_status.upper()} ({elapsed}s)")
+                    _save_session_id(job["url"], session_id)
                     return display_status, duration_ms
 
                 add_event(f"[W{worker_id}] FAILED ({elapsed}s): {display_status[:30]}")
                 update_state(worker_id, status="failed",
                              last_action=f"FAILED: {display_status[:25]}")
+                _save_session_id(job["url"], session_id)
                 return status_key, duration_ms
 
             # No RESULT line found — check for provider errors
@@ -863,6 +1219,13 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                 if chain_idx < chain_len - 1:
                     add_event(f"[W{worker_id}] {label} no result (provider error, fallback #{chain_idx + 2})")
                     chain_idx += 1
+                    continue
+                elif chain_len <= 1:
+                    # Single-provider: never give up — keep retrying forever
+                    _last_error_time = time.time()
+                    add_event(f"[W{worker_id}] {label} no result (provider error) — retrying same provider in 10s")
+                    chain_idx = 0
+                    time.sleep(10)
                     continue
                 # All providers exhausted — wrap around to first and retry
                 chain_idx = 0
@@ -885,6 +1248,13 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             if chain_idx < chain_len - 1:
                 add_event(f"[W{worker_id}] Timeout may be provider issue — fallback #{chain_idx + 2}")
                 chain_idx += 1
+                continue
+            elif chain_len <= 1:
+                # Single-provider: never give up — keep retrying forever
+                _last_error_time = time.time()
+                add_event(f"[W{worker_id}] {label} TIMEOUT — retrying same provider in 10s")
+                chain_idx = 0
+                time.sleep(10)
                 continue
             # All providers exhausted — wrap around to first and retry
             chain_idx = 0
@@ -956,7 +1326,8 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                 min_score: int = 7, headless: bool = False,
                 model: str = "sonnet", provider: str = "",
                 provider_chain: list | None = None,
-                dry_run: bool = False) -> tuple[int, int]:
+                dry_run: bool = False,
+                strategy: str | None = None) -> tuple[int, int]:
     """Run jobs sequentially until limit is reached or queue is empty.
 
     Uses provider_chain (list of (provider, model) tuples, highest priority first)
@@ -982,7 +1353,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
     continuous = limit == 0
     jobs_done = 0
     empty_polls = 0
-    port = BASE_CDP_PORT + worker_id
+    port = 9515 + worker_id  # match run_apply.py's base port for Chrome started via start-chrome.sh
 
     # Build the effective provider chain
     if provider_chain:
@@ -1000,7 +1371,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                      last_action="waiting for job", actions=0)
 
         job = acquire_job(target_url=target_url, min_score=min_score,
-                          worker_id=worker_id)
+                          worker_id=worker_id, strategy=strategy)
         if not job:
             if not continuous:
                 add_event(f"[W{worker_id}] Queue empty")
@@ -1093,6 +1464,50 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
     return applied, failed
 
 
+def _run_multi_worker(workers, effective_limit, target_url,
+                      min_score, headless, model, provider,
+                      provider_chain, dry_run, strategy=None):
+    """Run multiple worker loops in parallel using ThreadPoolExecutor."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    if effective_limit:
+        base = effective_limit // workers
+        extra = effective_limit % workers
+        limits = [base + (1 if i < extra else 0)
+                  for i in range(workers)]
+    else:
+        limits = [0] * workers  # continuous mode
+
+    with ThreadPoolExecutor(max_workers=workers,
+                            thread_name_prefix="apply-worker") as executor:
+        futures = {
+            executor.submit(
+                worker_loop,
+                worker_id=i,
+                limit=limits[i],
+                target_url=target_url,
+                min_score=min_score,
+                headless=headless,
+                model=model,
+                provider=provider,
+                provider_chain=provider_chain,
+                dry_run=dry_run,
+                strategy=strategy,
+            ): i
+            for i in range(workers)
+        }
+
+        results: list[tuple[int, int]] = []
+        for future in as_completed(futures):
+            wid = futures[future]
+            try:
+                results.append(future.result())
+            except Exception:
+                logger.exception("Worker %d crashed", wid)
+                results.append((0, 0))
+
+    return sum(r[0] for r in results), sum(r[1] for r in results)
+
+
 # ---------------------------------------------------------------------------
 # Main entry point (called from cli.py)
 # ---------------------------------------------------------------------------
@@ -1102,7 +1517,8 @@ def main(limit: int = 1, target_url: str | None = None,
          provider: str = "",
          provider_chain: list | None = None,
          dry_run: bool = False, continuous: bool = False,
-         poll_interval: int = 60, workers: int = 1) -> None:
+         poll_interval: int = 60, workers: int = 1,
+         strategy: str | None = None) -> None:
     """Launch the apply pipeline.
 
     Args:
@@ -1123,7 +1539,8 @@ def main(limit: int = 1, target_url: str | None = None,
     _stop_event.clear()
 
     config.ensure_dirs()
-    console = Console()
+    _is_tty = sys.stdout.isatty()
+    console = Console(stderr=True) if not _is_tty else Console()
 
     if continuous:
         effective_limit = 0
@@ -1138,7 +1555,8 @@ def main(limit: int = 1, target_url: str | None = None,
 
     worker_label = f"{workers} worker{'s' if workers > 1 else ''}"
     console.print(f"Launching apply pipeline ({mode_label}, {worker_label}, poll every {POLL_INTERVAL}s)...")
-    console.print("[dim]Ctrl+C = skip current job(s) | Ctrl+C x2 = stop[/dim]")
+    if _is_tty:
+        console.print("[dim]Ctrl+C = skip current job(s) | Ctrl+C x2 = stop[/dim]")
 
     # Double Ctrl+C handler
     _ctrl_c_count = 0
@@ -1146,7 +1564,8 @@ def main(limit: int = 1, target_url: str | None = None,
     # ── Start background provider prober ──────────────────────────────────────────
     # Polls the highest-priority provider every 30s so we know immediately when
     # it recovers and can switch back even mid-job.
-    if provider_chain:
+    # Only needed for multi-provider chains — local/single-provider doesn't need probing.
+    if provider_chain and len(provider_chain) > 1:
         _start_prober(provider_chain)
         add_event("Background provider prober started (every 30s)")
 
@@ -1173,20 +1592,48 @@ def main(limit: int = 1, target_url: str | None = None,
     signal.signal(signal.SIGINT, _sigint_handler)
 
     try:
-        with Live(render_full(), console=console, refresh_per_second=2) as live:
-            # Daemon thread for display refresh only (no business logic)
+        if _is_tty:
+            # Start the KV cache monitor (polls llama-server /slots if running)
+            from applypilot.apply.dashboard import start_cache_monitor
+            start_cache_monitor(port=int(os.environ.get("LLAMA_PORT", "11434")))
+
+            # TTY: full dashboard with ANSI cursor-overwrite
             _dashboard_running = True
+            _dash_output = ""  # last full output for height calculation
+
+            def _render_str() -> str:
+                from io import StringIO
+                from rich.console import Console as RichConsole
+                buf = StringIO()
+                rc = RichConsole(file=buf, width=120, color_system=None)
+                rc.print(render_full())
+                return buf.getvalue()
+
+            def _get_height(text: str) -> int:
+                return text.count("\n") + 1
+
+            # Initial print
+            from applypilot.apply.dashboard import render_full
+            out = _render_str()
+            print(out, end="")
+            _dash_output = out
 
             def _refresh():
+                nonlocal _dash_output
                 while _dashboard_running:
-                    live.update(render_full())
-                    time.sleep(0.5)
+                    time.sleep(2)
+                    out = _render_str()
+                    if out == _dash_output:
+                        continue
+                    h = _get_height(_dash_output)
+                    sys.stdout.write(f"\033[{h}A\033[J")
+                    print(out, end="")
+                    _dash_output = out
 
             refresh_thread = threading.Thread(target=_refresh, daemon=True)
             refresh_thread.start()
 
             if workers == 1:
-                # Single worker — run directly in main thread
                 total_applied, total_failed = worker_loop(
                     worker_id=0,
                     limit=effective_limit,
@@ -1197,50 +1644,43 @@ def main(limit: int = 1, target_url: str | None = None,
                     provider=provider,
                     provider_chain=provider_chain,
                     dry_run=dry_run,
+                    strategy=strategy,
                 )
             else:
-                # Multi-worker — distribute limit across workers
-                if effective_limit:
-                    base = effective_limit // workers
-                    extra = effective_limit % workers
-                    limits = [base + (1 if i < extra else 0)
-                              for i in range(workers)]
-                else:
-                    limits = [0] * workers  # continuous mode
-
-                with ThreadPoolExecutor(max_workers=workers,
-                                        thread_name_prefix="apply-worker") as executor:
-                    futures = {
-                        executor.submit(
-                            worker_loop,
-                            worker_id=i,
-                            limit=limits[i],
-                            target_url=target_url,
-                            min_score=min_score,
-                            headless=headless,
-                            model=model,
-                            provider=provider,
-                            provider_chain=provider_chain,
-                            dry_run=dry_run,
-                        ): i
-                        for i in range(workers)
-                    }
-
-                    results: list[tuple[int, int]] = []
-                    for future in as_completed(futures):
-                        wid = futures[future]
-                        try:
-                            results.append(future.result())
-                        except Exception:
-                            logger.exception("Worker %d crashed", wid)
-                            results.append((0, 0))
-
-                total_applied = sum(r[0] for r in results)
-                total_failed = sum(r[1] for r in results)
+                total_applied, total_failed = _run_multi_worker(
+                    workers, effective_limit, target_url,
+                    min_score, headless, model, provider,
+                    provider_chain, dry_run,
+                    strategy=strategy,
+                )
 
             _dashboard_running = False
             refresh_thread.join(timeout=2)
-            live.update(render_full())
+            sys.stdout.write(f"\033[{_get_height(_dash_output)}A\033[J")
+            print(_render_str(), end="")
+        else:
+            # Non-TTY: fall back to simple console logging
+            console.print("Running in non-TTY mode (dashboard disabled)...")
+            if workers == 1:
+                total_applied, total_failed = worker_loop(
+                    worker_id=0,
+                    limit=effective_limit,
+                    target_url=target_url,
+                    min_score=min_score,
+                    headless=headless,
+                    model=model,
+                    provider=provider,
+                    provider_chain=provider_chain,
+                    dry_run=dry_run,
+                    strategy=strategy,
+                )
+            else:
+                total_applied, total_failed = _run_multi_worker(
+                    workers, effective_limit, target_url,
+                    min_score, headless, model, provider,
+                    provider_chain, dry_run,
+                    strategy=strategy,
+                )
 
         totals = get_totals()
         console.print(

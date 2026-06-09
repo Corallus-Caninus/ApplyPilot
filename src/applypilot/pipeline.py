@@ -38,7 +38,7 @@ STAGE_META: dict[str, dict] = {
     "discover": {"desc": "Job discovery (all sources: JobSpy + Workday + Big Tech)"},
     "jobspy":   {"desc": "JobSpy scrape (Indeed, LinkedIn, Google, Glassdoor)"},
     "workday":  {"desc": "Workday API corporate scraper (48+ employers)"},
-    "bigtech":  {"desc": "Big Tech direct API scrapers (Microsoft, Google, Amazon, Meta)"},
+    "bigtech":  {"desc": "Big Tech direct scrapers (Microsoft, Google, Databricks) — targets: Meta, Netflix, OpenAI, Anthropic, Amazon, Snowflake, IBM, Oracle, Qualcomm, ARM, Broadcom, Tesla, Cisco, AMD"},
     "enrich":   {"desc": "Detail enrichment (full descriptions + apply URLs)"},
     "score":    {"desc": "LLM scoring (fit 1-10)"},
     "tailor":   {"desc": "Resume tailoring (LLM + validation)"},
@@ -114,7 +114,16 @@ def _run_score(rescore: bool = False) -> dict:
     """Stage: LLM scoring — assign fit scores 1-10."""
     try:
         from applypilot.scoring.scorer import run_scoring
-        run_scoring(rescore=rescore, provider_chain=DEFAULT_PROVIDER_CHAIN)
+        # Use env-overridden provider if set (e.g. --provider local)
+        import os
+        env_provider = os.environ.get("LLM_PROVIDER", "")
+        env_model = os.environ.get("LLM_MODEL", "")
+        if env_provider:
+            chain = [(env_provider, env_model or "")]
+        else:
+            from applypilot.config import DEFAULT_PROVIDER_CHAIN
+            chain = DEFAULT_PROVIDER_CHAIN
+        run_scoring(rescore=rescore, provider_chain=chain)
         return {"status": "ok"}
     except Exception as e:
         log.error("Scoring failed: %s", e)

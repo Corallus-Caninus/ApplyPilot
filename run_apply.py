@@ -12,7 +12,6 @@
      7. OpenRouter  (google/gemma-4-31b-it:free)        — 31B dense, good (rate-limited)
      8. OpenRouter  (openai/gpt-oss-120b:free)          — 120B dense (was down)
      9. OpenRouter  (nvidia/nemotron-3-super-120b-a12b:free) — fallback via OpenRouter
-     # 9. opencode-go (deepseek-v4-flash) — commented to save tokens
 
    Use --provider and/or --model to pin to a single provider (no fallback).
 
@@ -20,7 +19,7 @@
    is preserved and retried with the next model in the chain. Once all models
    are exhausted, it wraps around to the first and keeps trying until the
    model itself makes a decision (applied, failed:*, expired, captcha, etc.)."""
-import sys, os, subprocess, time, signal
+import sys, os, subprocess, time, signal, atexit
 sys.path.insert(0, os.path.expanduser("~/Code/ApplyPilot/src"))
 sys.path.insert(0, os.path.expanduser("~/Code/applypilot/.venv/lib/python3.11/site-packages"))
 
@@ -34,7 +33,17 @@ workers = 1
 provider = None
 model = None
 no_fallback = False
+target_url = None
+strategy = None
 
+if "--url" in sys.argv:
+    idx = sys.argv.index("--url")
+    try:
+        target_url = sys.argv[idx + 1]
+        sys.argv.pop(idx + 1)
+        sys.argv.pop(idx)
+    except IndexError:
+        pass
 if "--workers" in sys.argv:
     idx = sys.argv.index("--workers")
     try:
@@ -57,36 +66,36 @@ if "--model" in sys.argv:
         model = sys.argv[idx + 1]
         sys.argv.pop(idx + 1)
         sys.argv.pop(idx)
-    except IndexError:
+    except (IndexError, ValueError):
         pass
 if "--no-fallback" in sys.argv:
     no_fallback = True
     sys.argv.pop(sys.argv.index("--no-fallback"))
 
+if "--strategy" in sys.argv:
+    idx = sys.argv.index("--strategy")
+    try:
+        strategy = sys.argv[idx + 1]
+        sys.argv.pop(idx + 1)
+        sys.argv.pop(idx)
+    except IndexError:
+        pass
+
+# Override LLM_URL for local provider (load_env() may have set it from .env)
+if provider == "local":
+    os.environ["LLM_URL"] = "http://127.0.0.1:11434/v1"
+    if model:
+        os.environ["LLM_MODEL"] = model
+
 BASE_CDP_PORT = 9515
 CHROME_SCRIPT = os.path.expanduser("~/Code/applypilot/start-chrome.sh")
 
-# Start Chrome for each worker
+# Chrome is managed externally by start-chrome.sh / apply_local_llama.sh
+# Do NOT start it here — the PID file lock prevents duplicates but the
+# redundant spawn adds noise and complicates cleanup.
+# The chrome_procs list is left empty so the cleanup handler is a no-op.
 chrome_procs = []
-for i in range(workers):
-    port = BASE_CDP_PORT + i
-    print(f"Starting Chrome worker {i} on port {port}...")
-    proc = subprocess.Popen(
-        ["bash", CHROME_SCRIPT, str(port)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    chrome_procs.append(proc)
-    time.sleep(2)
-
-# Kill Chrome on exit
-def _cleanup():
-    for p in chrome_procs:
-        try:
-            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
-        except (ProcessLookupError, PermissionError, AttributeError):
-            pass
-import atexit
+_cleanup = lambda: None
 atexit.register(_cleanup)
 
 from applypilot.apply.launcher import main
@@ -111,7 +120,8 @@ sys.exit(main(
     provider_chain=provider_chain,
     dry_run=False,
     headless=False,
-    continuous=True,
+    continuous=True if not target_url else False,
     poll_interval=5,
-    target_url=None,
+    target_url=target_url,
+    strategy=strategy,
 ))
