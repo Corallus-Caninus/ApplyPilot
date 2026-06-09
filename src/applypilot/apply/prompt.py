@@ -74,9 +74,15 @@ def _build_location_check(profile: dict, search_config: dict) -> str:
     primary_city = personal.get("city", location_cfg.get("primary", "your city"))
     city_list = ", ".join(accept_patterns) if accept_patterns else primary_city
     return f"""== LOCATION CHECK ==
-Remote -> APPLY. Onsite/hybrid in {city_list} -> APPLY. Onsite/hybrid elsewhere + "remote OK" -> APPLY.
-Outside {city_list} + no remote -> RESULT:FAILED:not_eligible_location. Overseas + no remote -> SAME.
-Unknown -> proceed, answer screening honestly."""
+REMOTE jobs -> Always APPLY regardless of candidate location.
+ONSITE/HYBRID jobs whose work location is in: {city_list} -> APPLY.
+ONSITE/HYBRID jobs NOT in the above list + with "remote OK" in description -> APPLY.
+ONSITE/HYBRID jobs NOT in the above list and no "remote OK" -> RESULT:FAILED:not_eligible_location.
+Overseas jobs + no remote -> SAME.
+If unknown -> proceed, answer screening honestly.
+
+IMPORTANT: This check is about the JOB's work location, not the candidate's
+home city.  A remote job is always eligible regardless of where you live."""
 
 
 def _build_salary_section(profile: dict) -> str:
@@ -303,8 +309,9 @@ EARLY BAIL (if any match, output RESULT and STOP immediately):
    output RESULT:FAILED:not_eligible_role. STOP. Do NOT navigate to the URL.
 
 1. LOCATION CHECK — Read the location from the == JOB == section at the top.
-   Apply the rules in the == LOCATION CHECK == section above using ONLY the
-   job data you already have. Do NOT navigate to the URL for this check.
+   This is the JOB's work location. Compare it against the rules in the
+   == LOCATION CHECK == section.  Do NOT use your own home city — use the
+   job's listed location.  If the job is remote, skip this check.
    If location is not eligible -> output RESULT:FAILED:not_eligible_location. STOP.
 
 2. Navigate to the job URL. Snapshot the page. Look for the Apply button.
