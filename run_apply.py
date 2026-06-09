@@ -114,26 +114,8 @@ for i in range(workers):
         chrome_procs.append(proc)
         time.sleep(2)
 
-# ── Start Playwright MCP server (with auto-restart via start-mcp.sh PID lock) ──
-# Hermes also spawns its own MCP via config.yaml; this external one is a
-# safety net so the MCP is available even if Hermes hasn't started yet.
-# The PID file lock prevents duplicates.
-mcp_procs = []
-if os.path.exists(MCP_SCRIPT):
-    mcp_proc = subprocess.Popen(
-        ["bash", MCP_SCRIPT, str(BASE_CDP_PORT)],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    mcp_procs.append(mcp_proc)
-
 # ── Cleanup on exit ────────────────────────────────────────────────────
 def _cleanup():
-    for p in mcp_procs:
-        try:
-            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
-        except (ProcessLookupError, PermissionError, AttributeError):
-            pass
     for p in chrome_procs:
         try:
             os.killpg(os.getpgid(p.pid), signal.SIGTERM)
