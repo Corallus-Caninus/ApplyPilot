@@ -69,7 +69,7 @@ case "$MODEL_FLAG" in
         # 9B-MTP Q4_K_M ~5.6GB — self-drafts via MTP heads
         MODEL_CTX=64000
         NGL=33
-        MTP_FLAGS="--spec-type draft-mtp --spec-draft-n-max 4"
+        MTP_FLAGS="--spec-type draft-mtp --spec-draft-n-max 10"
         ;;
     9bd|9BD|9b-draft|9B-DRAFT)
         MODEL="qwen3.5:9b"
