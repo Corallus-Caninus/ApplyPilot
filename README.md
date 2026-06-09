@@ -10,13 +10,31 @@ bash ~/Code/applypilot/start-chrome.sh
 
 ## Commands
 
-### Run the apply loop
+### Run the apply loop (with cloud models)
 
 ```bash
 cd ~/Code/applypilot && python3 run_apply.py [--provider PROVIDER] [--workers N] [--strategy STRATEGY]
 ```
 
-Starts the continuous apply loop. Picks the highest-scored unprocessed job from the queue, launches a Hermes AI agent to fill and submit the application, then repeats. Polls every 5s for new jobs. Ctrl+C once to skip current job, twice to stop.
+Starts Chrome + Playwright MCP (with auto-restart wrappers), then runs the continuous apply loop.
+Picks the highest-scored unprocessed job from the queue, launches a Hermes AI agent to fill
+and submit the application, then repeats. Polls every 5s for new jobs.
+Ctrl+C once to skip current job, twice to stop.
+
+**Requires** an LLM backend — either a cloud provider (opencode, openrouter, gemini) or
+a local llama-server running on port 11434. For the full local stack including
+llama-server startup, VRAM checks, and prompt caching, use `apply_local_llama.sh` instead.
+
+### Run the apply loop (local model — full stack)
+
+```bash
+./apply_local_llama.sh --model 9b
+```
+
+This single command starts everything: llama-server (with 100% GPU offload,
+prompt caching, flash attention) → Chrome → Playwright MCP → apply pipeline.
+On exit it cleans up all processes. Uses `applypilot_mcp_server.py` for
+credential management and field cache.
 
 **`--workers N`** — Number of parallel Chrome/Hermes agents (default: 1).
   With more workers, multiple jobs are processed simultaneously. Each worker

@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
-"""ApplyPilot launcher — starts Chrome, applies to jobs, optional workers flag.
+"""ApplyPilot launcher — starts Chrome + MCP, applies to jobs.
    Usage: python3 run_apply.py [--workers N] [--provider P] [--model M] [--no-fallback]
+
+   Starts Chrome and Playwright MCP server with auto-restart wrappers,
+   then runs the apply pipeline. Chrome and MCP are killed on exit.
+
+   For the full stack (llama-server + Chrome + MCP + apply), use:
+     ./apply_local_llama.sh --model 9b
+
+   That script handles llama-server startup, VRAM checks, and prompt caching.
+   This script (run_apply.py) assumes llama-server is already running.
 
    Default provider priority chain (auto-fallback on failure):
      1. OpenCode Zen (nemotron-3-super-free)              — 12B active MoE, via Zen (no 429 caps)
@@ -88,14 +97,48 @@ if provider == "local":
         os.environ["LLM_MODEL"] = model
 
 BASE_CDP_PORT = 9515
-CHROME_SCRIPT = os.path.expanduser("~/Code/applypilot/start-chrome.sh")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CHROME_SCRIPT = os.path.join(SCRIPT_DIR, "start-chrome.sh")
+MCP_SCRIPT = os.path.join(SCRIPT_DIR, "start-mcp.sh")
 
-# Chrome is managed externally by start-chrome.sh / apply_local_llama.sh
-# Do NOT start it here — the PID file lock prevents duplicates but the
-# redundant spawn adds noise and complicates cleanup.
-# The chrome_procs list is left empty so the cleanup handler is a no-op.
+# ── Start Chrome (with auto-restart via start-chrome.sh PID lock) ────────
 chrome_procs = []
-_cleanup = lambda: None
+for i in range(workers):
+    port = BASE_CDP_PORT + i
+    if os.path.exists(CHROME_SCRIPT):
+        proc = subprocess.Popen(
+            ["bash", CHROME_SCRIPT, str(port)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        chrome_procs.append(proc)
+        time.sleep(2)
+
+# ── Start Playwright MCP server (with auto-restart via start-mcp.sh PID lock) ──
+# Hermes also spawns its own MCP via config.yaml; this external one is a
+# safety net so the MCP is available even if Hermes hasn't started yet.
+# The PID file lock prevents duplicates.
+mcp_procs = []
+if os.path.exists(MCP_SCRIPT):
+    mcp_proc = subprocess.Popen(
+        ["bash", MCP_SCRIPT, str(BASE_CDP_PORT)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    mcp_procs.append(mcp_proc)
+
+# ── Cleanup on exit ────────────────────────────────────────────────────
+def _cleanup():
+    for p in mcp_procs:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, AttributeError):
+            pass
+    for p in chrome_procs:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, AttributeError):
+            pass
 atexit.register(_cleanup)
 
 from applypilot.apply.launcher import main
