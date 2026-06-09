@@ -1188,7 +1188,12 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                                     "sso_required", "account_required",
                                     "page_error", "site_blocked"}
                 _reason = status_key.split(":", 1)[-1] if ":" in status_key else ""
-                if (status_key.startswith("failed:")
+                # Single-provider (local model): always respect the agent's
+                # decision.  There's no fallback to switch to, and tool-level
+                # errors like Playwright timeouts contain strings ("timeout")
+                # that trigger detect_provider_error.  Skip the override.
+                if (chain_len > 1
+                    and status_key.startswith("failed:")
                     and _reason not in _AGENT_DECISIONS
                     and detect_provider_error(output)):
                     _last_error_time = time.time()
@@ -1234,7 +1239,10 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                 return status_key, duration_ms
 
             # No RESULT line found — check for provider errors
-            if detect_provider_error(output):
+            # Single-provider (local): skip provider error detection.
+            # Tool-level errors (Playwright timeouts) contain strings like
+            # "timeout" that would falsely trigger it.  Just fail cleanly.
+            if chain_len > 1 and detect_provider_error(output):
                 _last_error_time = time.time()
                 if chain_idx < chain_len - 1:
                     add_event(f"[W{worker_id}] {label} no result (provider error, fallback #{chain_idx + 2})")
