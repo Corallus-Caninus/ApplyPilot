@@ -137,10 +137,10 @@ if echo "$MODEL" | grep -q 'qwen' && [ -f "$DRAFT_GGUF" ] && ! echo "$MODEL" | g
     DRAFT_FLAGS="--spec-draft-model $DRAFT_GGUF --spec-draft-n-max 24 --spec-draft-n-min 3 --spec-draft-type-k q8_0 --spec-draft-type-v q8_0"
 fi
 
-# ── LLaMA draft model (Llama 3.2 1B MTP, 8 prediction heads) ───────────
-LLAMA_DRAFT_GGUF="$HOME/Code/qwen_mi25/Llama-3.2-1B-MTP-k8-Q8_0.gguf"
+# ── LLaMA draft model (Llama 3.2 1B Instruct, standard speculative decoding) ──
+LLAMA_DRAFT_GGUF="$HOME/Code/qwen_mi25/llama-3.2-1b-instruct-q8_0.gguf"
 if echo "$MODEL" | grep -qE 'llama|hermes' && [ -f "$LLAMA_DRAFT_GGUF" ]; then
-    DRAFT_FLAGS="--spec-draft-model $LLAMA_DRAFT_GGUF --spec-draft-n-max 8 --spec-draft-n-min 2 --spec-draft-type-k q8_0 --spec-draft-type-v q8_0 --spec-type draft-mtp"
+    DRAFT_FLAGS="--spec-draft-model $LLAMA_DRAFT_GGUF --spec-draft-n-max 8 --spec-draft-n-min 2 --spec-draft-type-k q8_0 --spec-draft-type-v q8_0"
 fi
 
 # ── Auto-discover llama-server binary ────────────────────────────────────
