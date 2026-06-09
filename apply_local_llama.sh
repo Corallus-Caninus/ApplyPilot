@@ -114,8 +114,9 @@ case "$MODEL_FLAG" in
         MODEL_LABEL="Hermes 3 Llama 3.1 8B"
         MODEL_GGUF="$HOME/Code/qwen_mi25/Hermes-3-Llama-3.1-8B.Q4_K_M.gguf"
         # NousResearch Hermes 3 — agentic fine-tune of Llama 3.1 8B
-        # Q4_K_M ~4.9GB — fits MI25 with 128K KV cache
-        MODEL_CTX=128000
+        # Q4_K_M ~4.9GB + speculative draft ~1.3GB + both KV caches
+        # = ~12GB total. Use 64K context to leave headroom.
+        MODEL_CTX=64000
         NGL=33
         MTP_FLAGS=""
         ;;
