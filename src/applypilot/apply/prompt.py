@@ -127,7 +127,13 @@ def _build_hard_rules(profile: dict) -> str:
     return f"""== HARD RULES ==
 1. Never lie about: citizenship, work auth, criminal history, education, clearance, licenses.
 2. {auth_rule}
-3. {name_rule}"""
+3. {name_rule}
+4. VERIFY BEFORE CLAIMING SUCCESS: Never output RESULT:APPLIED unless you
+   personally clicked Submit AND saw a confirmation page with your own
+   screenshot.  Do NOT trust your own prior reasoning — the confirmation
+   screenshot is the only proof that matters.  If you didn't take a
+   post-submit screenshot showing a confirmation message, you did not
+   apply yet.  Keep trying."""
 
 
 def _build_captcha_section() -> str:
@@ -332,9 +338,14 @@ EARLY BAIL (if any match, output RESULT and STOP immediately):
 
 9. {submit_instruction}
 
-10. After submit: snapshot -> look for "thank you" / "application received" / confirmation.
+10. After submit: IMMEDIATELY take a full-page screenshot. Read the visible text
+    on the page. You MUST see a confirmation message ("thank you", "application
+    received", "submitted successfully") in the page text before proceeding.
+    If you don't see a confirmation, you did NOT successfully submit — retry
+    or RESULT:FAILED:reason.
 
-11. Output RESULT code (see below).
+11. Output RESULT code (see below). Never output RESULT:APPLIED unless you
+    personally clicked Submit and then confirmed the submission via screenshot.
 
 == RESULT CODES ==
 APPLIED | EXPIRED | CAPTCHA | LOGIN_ISSUE

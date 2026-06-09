@@ -1004,10 +1004,13 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         if history:
             continuation = (
                 "\n\n== CONTINUATION (prior session lost) ==\n"
-                "This is a follow-up to a prior session whose context was lost.\n"
-                "The browser still has the application page open. Do NOT restart —\n"
-                "snapshot the page, check what's already filled, and continue.\n"
-                "Do NOT re-navigate or re-upload the resume.\n\n"
+                "A prior session for this job was interrupted. The browser page "
+                "may be closed or on a different URL. Navigate fresh to the job "
+                "URL, snapshot the page, and start from scratch.\n"
+                "Do NOT re-upload the resume or re-fill fields that are already "
+                "filled. Read the page carefully.\n"
+                "Do NOT claim success unless you personally submit the form. "
+                "Never trust prior session claims of APPLIED.\n\n"
             )
             agent_prompt = agent_prompt + continuation + history
 
