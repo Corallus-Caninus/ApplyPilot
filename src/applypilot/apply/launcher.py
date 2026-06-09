@@ -233,9 +233,12 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         cmd += ["-m", model or "qwen3.5:4b"]
         # Set context length based on model size — MI25 has 16GB VRAM.
         # 4B Q4 (~3.4GB) can handle 128K+; 9B Q4 (~5.6GB) fits 128K with Q8_0 KV cache.
+        # MoE models (LFM, etc.) have smaller KV cache per active param → full 128K.
         _model_name = (model or "qwen3.5:4b").lower()
         if "35b" in _model_name or "27b" in _model_name:
             _ctx = 16384
+        elif "lfm" in _model_name:
+            _ctx = 128000   # MoE with 1B active → very small KV, full 128K fits
         elif "9b" in _model_name or "8b" in _model_name:
             _ctx = 64000
         else:
@@ -248,19 +251,34 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         # form-filling progress instead of forcing a continuation restart.
         _cfg.setdefault("agent", {}).setdefault("context_compressor", {})
         _cfg["agent"]["context_compressor"]["enabled"] = True
-        _cfg["agent"]["context_compressor"]["threshold_tokens"] = 45000  # fire at ~70%
+        _ctx_comp_thresh = int(_ctx * 0.7)  # fire at ~70% of model context
+        _ctx_comp_tail = min(16000, int(_ctx * 0.15))  # keep last 15%
+        _cfg["agent"]["context_compressor"]["threshold_tokens"] = _ctx_comp_thresh
         _cfg["agent"]["context_compressor"]["target_ratio"] = 0.3       # compress to 30%
-        _cfg["agent"]["context_compressor"]["tail_budget"] = 16000       # keep last 16K tokens
+        _cfg["agent"]["context_compressor"]["tail_budget"] = _ctx_comp_tail
         # Also enable Hermes' built-in compression with sane thresholds
         _cfg["compression"] = {
             "enabled": True,
-            "threshold": 0.7,         # fire at 70% (~45K of 64K)
+            "threshold": 0.7,         # fire at 70% of context
             "target_ratio": 0.3,      # compress to 30%
             "protect_last_n": 20,
             "protect_first_n": 3,
             "hygiene_hard_message_limit": 200,
             "abort_on_summary_failure": False,
         }
+        # Pin all auxiliary models to the same local provider — otherwise they
+        # default to 'auto' which tries OpenCode API and fails with 401.
+        _aux_cfg = {
+            "provider": "custom",
+            "base_url": _local_url,
+            "model": model or "qwen3.5:9b",
+        }
+        if _local_key:
+            _aux_cfg["api_key"] = _local_key
+        for _aux_key in ("vision", "web_extract", "compression", "skills_hub",
+                         "approval", "mcp", "title_generation", "triage_specifier",
+                         "kanban_decomposer", "profile_describer", "curator"):
+            _cfg.setdefault("auxiliary", {}).setdefault(_aux_key, {}).update(_aux_cfg)
         # Register Playwright MCP server — Hermes manages its lifecycle
         _cfg.setdefault("mcp_servers", {}).setdefault("playwright", {
             "command": "npx",

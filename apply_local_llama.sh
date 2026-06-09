@@ -34,7 +34,7 @@
 set -e
 
 # ── Parse --model flag ────────────────────────────────────────────────────
-MODEL_FLAG="9b"
+MODEL_FLAG="lfm"
 PASSTHROUGH_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -89,8 +89,18 @@ case "$MODEL_FLAG" in
         NGL=33
         MTP_FLAGS=""
         ;;
+    lfm|LFM|lfm2.5)
+        MODEL="lfm2.5:8b"
+        MODEL_LABEL="LFM 2.5 8B A1B (MoE)"
+        MODEL_GGUF="$HOME/Code/qwen_mi25/LFM2.5-8B-A1B-Q4_K_M.gguf"
+        # Liquid AI LFM 2.5 — 8B MoE with 1B active params
+        # Q4_K_M ~5.15GB — fits MI25 16GB with 128K KV cache
+        MODEL_CTX=128000
+        NGL=33
+        MTP_FLAGS=""
+        ;;
     *)
-        echo "Unknown model: $MODEL_FLAG (use 0.8b, 4b, 9b, or llama)"
+        echo "Unknown model: $MODEL_FLAG (use 0.8b, 4b, 9b, lfm, or llama)"
         exit 1
         ;;
 esac
