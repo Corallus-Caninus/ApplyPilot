@@ -1000,19 +1000,17 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     )
     last_session_id = job.get("last_session_id")
     if last_session_id:
-        history = _get_recent_history(last_session_id, worker_id, max_turns=20)
-        if history:
-            continuation = (
-                "\n\n== CONTINUATION (prior session lost) ==\n"
-                "A prior session for this job was interrupted. The browser page "
-                "may be closed or on a different URL. Navigate fresh to the job "
-                "URL, snapshot the page, and start from scratch.\n"
-                "Do NOT re-upload the resume or re-fill fields that are already "
-                "filled. Read the page carefully.\n"
-                "Do NOT claim success unless you personally submit the form. "
-                "Never trust prior session claims of APPLIED.\n\n"
-            )
-            agent_prompt = agent_prompt + continuation + history
+        # Don't append raw prior-session history — it encourages the model
+        # to hallucinate success from stale context.  Just remind the agent
+        # to start fresh.  The agent should have summarized its progress
+        # in a PROGRESS: line before the session ended.
+        agent_prompt += (
+            "\n\n== CONTINUATION (prior session lost) ==\n"
+            "A prior session for this job was interrupted. "
+            "Navigate to the job URL and start from scratch.\n"
+            "Do NOT claim success unless you personally submit the form. "
+            "Never trust prior-session claims of APPLIED.\n"
+        )
 
     # Write per-worker MCP config
     mcp_config_path = config.APP_DIR / f".mcp-apply-{worker_id}.json"
