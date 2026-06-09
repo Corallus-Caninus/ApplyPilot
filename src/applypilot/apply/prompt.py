@@ -353,6 +353,16 @@ EARLY BAIL (if any match, output RESULT and STOP immediately):
 
 11. Output RESULT code (see below). Never output RESULT:APPLIED unless you
     personally clicked Submit and then confirmed the submission via screenshot.
+    If APPLIED, the NEXT line must be the full confirmation page URL you saw
+    after submitting.  No URL = no proof = your session will be rejected.
+
+    CORRECT:
+    RESULT:APPLIED
+    https://company.wd5.myworkdayjobs.com/confirmation/ABC123
+
+    WRONG (will be rejected):
+    RESULT:APPLIED
+    (no URL follows)
 
 == RESULT CODES ==
 APPLIED | EXPIRED | CAPTCHA | LOGIN_ISSUE

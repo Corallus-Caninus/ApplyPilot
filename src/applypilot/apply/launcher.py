@@ -1164,6 +1164,15 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             if result_line:
                 status_key, display_status = result_line
 
+                # URL verification for APPLIED — reject if no confirmation URL follows
+                if status_key == "applied":
+                    _url_line = output_lines[i + 1].strip() if i + 1 < len(output_lines) else ""
+                    if not _url_line.startswith("http"):
+                        add_event(f"[W{worker_id}] APPLIED claimed without confirmation URL — rejecting")
+                        status_key = "failed:no_confirmation_url"
+                        display_status = "no_confirmation_url"
+                        result_line = (status_key, display_status)
+
                 # Check if the result is actually a provider error disguised as RESULT:FAILED.
                 # Only override when the agent gave a generic reason (not a specific eligibility
                 # decision like not_eligible_location / not_eligible_role / not_eligible_work_auth).
