@@ -231,6 +231,11 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
             _cfg["model"]["api_key"] = _local_key
         env.pop("HERMES_MODE", None)
         cmd += ["-m", model or "qwen3.5:4b"]
+        # Disable streaming for local models — their JSON output can be
+        # malformed mid-stream (especially when embedding JS code in tool
+        # call args), which kills the session.  Non-streaming gives the
+        # model the error message and lets it retry naturally.
+        _cfg.setdefault("display", {})["streaming"] = False
         # Set context length based on model size — MI25 has 16GB VRAM.
         # 4B Q4 (~3.4GB) can handle 128K+; 9B Q4 (~5.6GB) fits 128K with Q8_0 KV cache.
         # MoE models (LFM, etc.) have smaller KV cache per active param → full 128K.
@@ -1122,9 +1127,6 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 
             returncode = proc.returncode
             proc = None
-
-            if returncode and returncode < 0:
-                return "skipped", int((time.time() - overall_start) * 1000)
 
             output = "\n".join(stdout_lines)
             elapsed = int(time.time() - start)
