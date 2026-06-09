@@ -99,8 +99,18 @@ case "$MODEL_FLAG" in
         NGL=33
         MTP_FLAGS=""
         ;;
+    qwenmoe|QwenMOE|qwen3moe|qwen2x4b)
+        MODEL="qwen3-moe:8b"
+        MODEL_LABEL="Qwen3 MoE 2x4B (4B active)"
+        MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3-MOE-2x4B-8B-Jan-Nano-Instruct-II.Q4_K_M.gguf"
+        # Qwen3 MoE — 2 experts of 4B, 4B active per token
+        # Q4_K_M ~4.13GB — fits MI25 with lots of KV cache headroom
+        MODEL_CTX=128000
+        NGL=33
+        MTP_FLAGS=""
+        ;;
     *)
-        echo "Unknown model: $MODEL_FLAG (use 0.8b, 4b, 9b, lfm, or llama)"
+        echo "Unknown model: $MODEL_FLAG (use 0.8b, 4b, 9b, lfm, qwenmoe, or llama)"
         exit 1
         ;;
 esac
@@ -253,7 +263,6 @@ else
                 --cache-type-v q8_0 \
                 --reasoning off \
                 --alias "${MODEL}" \
-                --ctx-checkpoints 48 \
                 --timeout 1800 \
                 ${MTP_FLAGS:-} ${DRAFT_FLAGS:-} \
                 -c ${MODEL_CTX} \
