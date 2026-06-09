@@ -109,8 +109,18 @@ case "$MODEL_FLAG" in
         NGL=33
         MTP_FLAGS=""
         ;;
+    hermes|Hermes|hermes3)
+        MODEL="hermes3:8b"
+        MODEL_LABEL="Hermes 3 Llama 3.1 8B"
+        MODEL_GGUF="$HOME/Code/qwen_mi25/Hermes-3-Llama-3.1-8B.Q4_K_M.gguf"
+        # NousResearch Hermes 3 — agentic fine-tune of Llama 3.1 8B
+        # Q4_K_M ~4.9GB — fits MI25 with 128K KV cache
+        MODEL_CTX=128000
+        NGL=33
+        MTP_FLAGS=""
+        ;;
     *)
-        echo "Unknown model: $MODEL_FLAG (use 0.8b, 4b, 9b, lfm, qwenmoe, or llama)"
+        echo "Unknown model: $MODEL_FLAG (use 0.8b, 4b, 9b, lfm, qwenmoe, hermes, or llama)"
         exit 1
         ;;
 esac
@@ -123,13 +133,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}" 2>/dev/null)" && pwd)"
 # ── Draft model for speculative decoding (0.8B-MTP, same tokenizer) ────
 DRAFT_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-0.8B-MTP-Q8_0.gguf"
 DRAFT_FLAGS=""
-if echo "$MODEL" | grep -q 'qwen' && [ -f "$DRAFT_GGUF" ] && ! echo "$MODEL" | grep -q '9b' && ! echo "$MODEL" | grep -q '0.8b' && ! echo "$MODEL" | grep -q '4b'; then
+if echo "$MODEL" | grep -q 'qwen' && [ -f "$DRAFT_GGUF" ] && ! echo "$MODEL" | grep -q '9b' && ! echo "$MODEL" | grep -q '0.8b' && ! echo "$MODEL" | grep -q '4b' && ! echo "$MODEL" | grep -q 'moe'; then
     DRAFT_FLAGS="--spec-draft-model $DRAFT_GGUF --spec-draft-n-max 24 --spec-draft-n-min 3 --spec-draft-type-k q8_0 --spec-draft-type-v q8_0"
 fi
 
 # ── LLaMA draft model (Llama 3.2 1B MTP, 8 prediction heads) ───────────
 LLAMA_DRAFT_GGUF="$HOME/Code/qwen_mi25/Llama-3.2-1B-MTP-k8-Q8_0.gguf"
-if echo "$MODEL" | grep -q 'llama' && [ -f "$LLAMA_DRAFT_GGUF" ]; then
+if echo "$MODEL" | grep -qE 'llama|hermes' && [ -f "$LLAMA_DRAFT_GGUF" ]; then
     DRAFT_FLAGS="--spec-draft-model $LLAMA_DRAFT_GGUF --spec-draft-n-max 8 --spec-draft-n-min 2 --spec-draft-type-k q8_0 --spec-draft-type-v q8_0 --spec-type draft-mtp"
 fi
 
