@@ -335,19 +335,12 @@ else
     done
 
     # Wait for model to finish loading into VRAM
-    info "Waiting for model to load into VRAM..."
-    for i in $(seq 1 60); do
-        if grep -q "model loaded" "$LOG" 2>/dev/null; then
-            ok "Model loaded into VRAM"
-            grep -i "hip\|gpu\|roc\|cache\|memory\|layer\|flash\|listen\|model loaded" "$LOG" 2>/dev/null | tail -10 || true
-            break
-        fi
-        if [ $i -eq 60 ]; then
-            err "Model failed to load within 60s. Check $LOG"
-            tail -20 "$LOG" 2>/dev/null
-            exit 1
-        fi
+    info "Waiting for model to load into VRAM (no timeout)..."
+    while ! grep -q "model loaded" "$LOG" 2>/dev/null; do
         sleep 1
+    done
+    ok "Model loaded into VRAM"
+    grep -i "hip\|gpu\|roc\|cache\|memory\|layer\|flash\|listen\|model loaded" "$LOG" 2>/dev/null | tail -10 || true
     done
 fi
 
