@@ -254,22 +254,12 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         # Re-enable context compression to keep sessions alive past 64K
         # This costs ~1-2 minutes per compression cycle but preserves all
         # form-filling progress instead of forcing a continuation restart.
+        # DISABLED: the compressor's LLM calls cancel the agent's generation
+        # on single-server setups (should_stop → task cancel loop).
         _cfg.setdefault("agent", {}).setdefault("context_compressor", {})
-        _cfg["agent"]["context_compressor"]["enabled"] = True
-        _ctx_comp_thresh = int(_ctx * 0.7)  # fire at ~70% of model context
-        _ctx_comp_tail = min(16000, int(_ctx * 0.15))  # keep last 15%
-        _cfg["agent"]["context_compressor"]["threshold_tokens"] = _ctx_comp_thresh
-        _cfg["agent"]["context_compressor"]["target_ratio"] = 0.3       # compress to 30%
-        _cfg["agent"]["context_compressor"]["tail_budget"] = _ctx_comp_tail
-        # Also enable Hermes' built-in compression with sane thresholds
+        _cfg["agent"]["context_compressor"]["enabled"] = False
         _cfg["compression"] = {
-            "enabled": True,
-            "threshold": 0.7,         # fire at 70% of context
-            "target_ratio": 0.3,      # compress to 30%
-            "protect_last_n": 20,
-            "protect_first_n": 3,
-            "hygiene_hard_message_limit": 200,
-            "abort_on_summary_failure": False,
+            "enabled": False,
         }
         # Pin all auxiliary models to the same local provider — otherwise they
         # default to 'auto' which tries OpenCode API and fails with 401.
