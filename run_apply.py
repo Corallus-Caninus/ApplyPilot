@@ -114,6 +114,25 @@ for i in range(workers):
         chrome_procs.append(proc)
         time.sleep(2)
 
+# ── Inject autofill script into Chrome via CDP ──────────────────────────
+# Fires on every new document/page load — fills cached fields automatically.
+_INJECT_SCRIPT = os.path.join(SCRIPT_DIR, "inject_autofill.py")
+if os.path.exists(_INJECT_SCRIPT):
+    for i in range(workers):
+        port = BASE_CDP_PORT + i
+        for attempt in range(10):
+            try:
+                import requests
+                r = requests.get(f"http://127.0.0.1:{port}/json/version", timeout=3)
+                if r.status_code == 200:
+                    subprocess.Popen(
+                        [sys.executable, _INJECT_SCRIPT, str(port)],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+                    break
+            except Exception:
+                time.sleep(1)
+
 # ── Cleanup on exit ────────────────────────────────────────────────────
 def _cleanup():
     for p in chrome_procs:

@@ -205,10 +205,6 @@ TOOLS = [
     {"name":"email_search","description":"Search Gmail for verification/password-reset emails. Query: from:(domain) subject:(keyword OR keyword)","inputSchema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}},
     {"name":"email_read","description":"Read full email body by message ID (from email_search).","inputSchema":{"type":"object","properties":{"msg_id":{"type":"string"}},"required":["msg_id"]}},
     {"name":"email_extract_link","description":"Extract verification/reset link from an email.","inputSchema":{"type":"object","properties":{"msg_id":{"type":"string"}},"required":["msg_id"]}},
-    {"name":"field_list","description":"List all cached form field label-value pairs for autofill.","inputSchema":{"type":"object","properties":{}}},
-    {"name":"field_save_batch","description":"Save field label-value pairs from a completed application to the autofill cache. Each pair: {\"label\":\"First Name\",\"value\":\"Josh\"}","inputSchema":{"type":"object","properties":{"pairs":{"type":"array","items":{"type":"object","properties":{"label":{"type":"string"},"value":{"type":"string"}},"required":["label","value"]}}},"required":["pairs"]}},
-    {"name":"field_prefill_script","description":"Return a JavaScript snippet that fills all cached fields into the current page. Run via mcp_playwright_browser_run_code_unsafe after navigation but before form filling.","inputSchema":{"type":"object","properties":{}}},
-    {"name":"field_capture_script","description":"Return a JavaScript snippet that extracts all filled form fields on the current page. Run via mcp_playwright_browser_run_code_unsafe after submission, then call field_save_batch with the result.","inputSchema":{"type":"object","properties":{}}},
 ]
 
 HANDLERS = {
@@ -219,10 +215,6 @@ HANDLERS = {
     "email_search": lambda a: email_search(a["query"]),
     "email_read": lambda a: email_read(a["msg_id"]),
     "email_extract_link": lambda a: email_extract_link(a["msg_id"]),
-    "field_list": lambda a: field_list(),
-    "field_save_batch": lambda a: field_save_batch(a["pairs"]),
-    "field_prefill_script": lambda a: field_prefill_script(),
-    "field_capture_script": lambda a: field_capture_script(),
 }
 
 def handle(req):
