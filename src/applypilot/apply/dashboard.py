@@ -236,7 +236,7 @@ def get_acceptance_panel() -> Panel | None:
                 if "draft acceptance" in line:
                     # "draft acceptance = 0.70000 (  21 accepted /    30 generated)"
                     m = __import__('re').search(
-                        r'acceptance = ([\d.]+) .*?(\d+) accepted / (\d+) generated',
+                        r'acceptance = ([\d.]+)\s*\(\s*(\d+)\s+accepted\s*/\s*(\d+)\s+generated',
                         line
                     )
                     if m:
