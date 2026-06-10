@@ -305,6 +305,12 @@ else
             # Only restart if the flag still exists (we weren't trying to stop)
             if [ -f "$_llama_restart_flag" ]; then
                 echo "[$(date '+%H:%M:%S')] llama-server exited (code $_exit_code) — restarting in 2s..." >> "$LOG"
+                # Check GPU health — if GPU coredumped, reset it before retrying
+                if ! rocm-smi 2>/dev/null | grep -q "GPU.*0%\|GPU.*100%"; then
+                    echo "[$(date '+%H:%M:%S')] GPU may be in fault state — attempting reset..." >> "$LOG"
+                    sudo rocm-smi --reset 2>/dev/null || true
+                    sleep 5
+                fi
                 sleep 2
             fi
         done
