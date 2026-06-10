@@ -36,11 +36,16 @@ set -e
 # ── Parse --model flag ────────────────────────────────────────────────────
 MODEL_FLAG="lfm"
 PASSTHROUGH_ARGS=()
+SERVER_ONLY=false
 while [ $# -gt 0 ]; do
     case "$1" in
         --model)
             shift
             MODEL_FLAG="${1:-4b}"
+            shift
+            ;;
+        --server-only)
+            SERVER_ONLY=true
             shift
             ;;
         *)
@@ -496,6 +501,14 @@ ZLIB_LIB=$(ls -d /nix/store/*-zlib-*/lib 2>/dev/null | head -1)
 PYTHON_LIB=$(dirname "$(readlink -f "$(which python3)" 2>/dev/null || echo "")")/lib 2>/dev/null || true
 if [ -n "$GCC_LIB" ] && [ -n "$ZLIB_LIB" ]; then
     export LD_LIBRARY_PATH="${PYTHON_LIB}:${GCC_LIB}:${ZLIB_LIB}"
+fi
+
+# ── Server-only mode: skip pipeline, just keep server running ────────
+if [ "$SERVER_ONLY" = true ]; then
+    info "Server-only mode — waiting for llama-server on port ${API_PORT}..."
+    # The restart loop in the background keeps it alive
+    wait
+    exit 0
 fi
 
 if [ "$RUN_MODE" = true ]; then

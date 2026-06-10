@@ -133,6 +133,33 @@ if os.path.exists(_INJECT_SCRIPT):
             except Exception:
                 time.sleep(1)
 
+# ── Llama-server health monitor (auto-restart on crash) ───────────────
+# Runs in a thread, detects GPU crashes, restarts server.
+# This is more robust than the bash subshell which dies on GPU faults.
+import threading as _t, urllib.request as _ur
+
+def _llama_health():
+    _script = os.path.join(SCRIPT_DIR, "apply_local_llama.sh")
+    _server = None
+    while True:
+        try:
+            _ur.urlopen("http://127.0.0.1:11434/v1/models", timeout=5)
+        except Exception:
+            time.sleep(2)
+            try:
+                _ur.urlopen("http://127.0.0.1:11434/v1/models", timeout=5)
+            except Exception:
+                # Two failures in a row — server is definitely down
+                if _server is None or _server.poll() is not None:
+                    _flag = model or "9b"
+                    _server = subprocess.Popen(
+                        ["bash", _script, "--model", _flag, "--server-only"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+        time.sleep(15)
+
+_t.Thread(target=_llama_health, daemon=True).start()
+
 # ── Cleanup on exit ────────────────────────────────────────────────────
 def _cleanup():
     for p in chrome_procs:
