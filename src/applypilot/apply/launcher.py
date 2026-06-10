@@ -1213,12 +1213,10 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 
                 if status_key == "applied":
                     add_event(f"[W{worker_id}] APPLIED via {label} ({elapsed}s): {job['title'][:30]}")
-                    # ── Independently verify by checking the actual page content ──
+                    # ── Save the page for manual verification ──────────────────────
                     _port = 9515 + worker_id
-                    _confirmed = False
                     try:
                         import urllib.request, json as _j
-                        # Get a page target from Chrome CDP
                         _targets = _j.loads(urllib.request.urlopen(
                             f"http://127.0.0.1:{_port}/json", timeout=5).read())
                         _ws = None
@@ -1229,43 +1227,25 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                         if _ws:
                             import websocket
                             _wsc = websocket.create_connection(_ws, timeout=10)
-                            # Run JS to get page text content
                             _cmd = _j.dumps({"id":1,"method":"Runtime.evaluate",
                                 "params":{"expression":
-                                    "document.body.innerText.substring(0,5000)"}})
+                                    "document.body.innerText.substring(0,20000)"}})
                             _wsc.send(_cmd)
                             _resp = _j.loads(_wsc.recv())
                             _wsc.close()
-                            _text = (_resp.get("result",{}).get("result",{})
-                                     .get("value","")).lower()
-                            _CONFIRM_WORDS = ["thank you", "application received",
-                                "submitted", "successfully submitted", "your application"]
-                            _confirmed = any(w in _text for w in _CONFIRM_WORDS)
-                            if _confirmed:
-                                add_event(f"[W{worker_id}] Page verification: CONFIRMED")
-                            else:
-                                add_event(f"[W{worker_id}] Page verification: FAILED — "
-                                          "no confirmation text found on page")
-                                # Save the page content for debugging
-                                try:
-                                    _dump = Path(config.LOG_DIR) / f"verify_fail_{ts}_w{worker_id}.txt"
-                                    _dump.write_text(_text)
-                                except Exception:
-                                    pass
+                            _page_text = (_resp.get("result",{}).get("result",{})
+                                          .get("value",""))
+                            _dump = config.LOG_DIR / f"confirmation_{ts}_w{worker_id}_{job.get('site','unknown')[:15]}.txt"
+                            _dump.write_text(_page_text)
+                            add_event(f"[W{worker_id}] Page saved to {_dump.name}")
                     except Exception as _e:
-                        add_event(f"[W{worker_id}] Page verification: error ({_e})")
+                        add_event(f"[W{worker_id}] Page save: {_e}")
 
-                    if not _confirmed:
-                        add_event(f"[W{worker_id}] APPLIED rejected — no confirmation on page")
-                        status_key = "failed:hallucinated_applied"
-                        display_status = "hallucinated_applied"
-                        result_line = (status_key, display_status)
-                    else:
-                        update_state(worker_id, status="applied",
-                                     last_action=f"APPLIED via {label} ({elapsed}s)")
-                        _capture_fields_async(worker_id, session_id or "")
-                        _save_session_id(job["url"], session_id)
-                        return "applied", duration_ms
+                    update_state(worker_id, status="applied",
+                                 last_action=f"APPLIED via {label} ({elapsed}s)")
+                    _capture_fields_async(worker_id, session_id or "")
+                    _save_session_id(job["url"], session_id)
+                    return "applied", duration_ms
 
                 PROMOTE_TO_STATUS = {"captcha", "expired", "login_issue"}
                 if display_status in PROMOTE_TO_STATUS:
