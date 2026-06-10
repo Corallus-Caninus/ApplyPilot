@@ -160,7 +160,7 @@ fi
 # Same tokenizer as the 9B target, so acceptance rate is high.
 # Draft KV cache quantized to Q8 to save VRAM.
 QWEN_DRAFT_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-0.8B-MTP-Q8_0.gguf"
-if echo "$MODEL_FLAG" | grep -qi 'draft' && echo "$MODEL" | grep -qE 'qwen.*5.*9b|qwen.*5.*4b' && [ -f "$QWEN_DRAFT_GGUF" ]; then
+if (echo "$MODEL_FLAG" | grep -qiE 'draft|9bd' ) && echo "$MODEL" | grep -qE 'qwen.*5.*9b|qwen.*5.*4b' && [ -f "$QWEN_DRAFT_GGUF" ]; then
     DRAFT_FLAGS="--spec-draft-model $QWEN_DRAFT_GGUF --spec-draft-n-max 20 --spec-draft-n-min 3 --spec-draft-type-k q8_0 --spec-draft-type-v q8_0"
 fi
 
