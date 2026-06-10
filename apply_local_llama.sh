@@ -314,7 +314,7 @@ else
                 _vram_used=$(rocm-smi --showmeminfo vram 2>/dev/null | grep "VRAM Total Used Memory" | grep -oP '\d+' | tail -1)
                 if [ -n "$_vram_used" ] && [ "$_vram_used" -lt 1000000000 ] 2>/dev/null; then
                     echo "[$(date '+%H:%M:%S')] GPU VRAM dropped to ${_vram_used} — resetting GPU..." >> "$LOG"
-                    sudo rocm-smi --reset 2>/dev/null || true
+                    sudo rocm-smi --gpureset -d 0 2>/dev/null || true
                     sleep 8
                 fi
                 sleep 2

@@ -157,7 +157,7 @@ def _reset_gpu() -> bool:
     """Reset the GPU via rocm-smi. Returns True if reset appeared to work."""
     try:
         subprocess.run(
-            ["sudo", "rocm-smi", "--reset"],
+            ["sudo", "rocm-smi", "--gpureset", "-d", "0"],
             timeout=30, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
         )
         time.sleep(8)  # Wait for reset to complete
