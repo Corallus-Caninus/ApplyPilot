@@ -77,8 +77,8 @@ case "$MODEL_FLAG" in
         MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-9B-MTP-Q4_K_M.gguf"
         # 9B-MTP Q4_K_M ~5.6GB + 0.8B draft ~0.8GB
         # 0.8B drafts 20 tokens autoregressively, 9B verifies in batch
-        # 48K context leaves ~4GB headroom for both KV caches
-        MODEL_CTX=48000
+        # 96K context — 9B KV is slower, making the draft relatively faster
+        MODEL_CTX=96000
         NGL=33
         MTP_FLAGS=""
         ;;
