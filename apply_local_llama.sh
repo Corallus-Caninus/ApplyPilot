@@ -310,11 +310,12 @@ else
             # Only restart if the flag still exists (we weren't trying to stop)
             if [ -f "$_llama_restart_flag" ]; then
                 echo "[$(date '+%H:%M:%S')] llama-server exited (code $_exit_code) — restarting in 2s..." >> "$LOG"
-                # Check GPU health — if GPU coredumped, reset it before retrying
-                if ! rocm-smi 2>/dev/null | grep -q "GPU.*0%\|GPU.*100%"; then
-                    echo "[$(date '+%H:%M:%S')] GPU may be in fault state — attempting reset..." >> "$LOG"
+                # Check GPU health — if VRAM dropped to near-zero, GPU faulted
+                _vram_used=$(rocm-smi --showmeminfo vram 2>/dev/null | grep "VRAM Total Used Memory" | grep -oP '\d+' | tail -1)
+                if [ -n "$_vram_used" ] && [ "$_vram_used" -lt 1000000000 ] 2>/dev/null; then
+                    echo "[$(date '+%H:%M:%S')] GPU VRAM dropped to ${_vram_used} — resetting GPU..." >> "$LOG"
                     sudo rocm-smi --reset 2>/dev/null || true
-                    sleep 5
+                    sleep 8
                 fi
                 sleep 2
             fi
@@ -340,8 +341,7 @@ else
         sleep 1
     done
     ok "Model loaded into VRAM"
-    grep -i "hip\|gpu\|roc\|cache\|memory\|layer\|flash\|listen\|model loaded" "$LOG" 2>/dev/null | tail -10 || true
-    done
+    grep -i "hip\\|gpu\\|roc\\|cache\\|memory\\|layer\\|flash\\|listen\\|model loaded" "$LOG" 2>/dev/null | tail -10 || true
 fi
 
 # ── Warm up the model ─────────────────────────────────────────────────────

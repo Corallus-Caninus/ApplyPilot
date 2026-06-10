@@ -133,29 +133,121 @@ if os.path.exists(_INJECT_SCRIPT):
             except Exception:
                 time.sleep(1)
 
-# ── Llama-server health monitor (auto-restart on crash) ───────────────
-# Runs in a thread, detects GPU crashes, restarts server.
-# This is more robust than the bash subshell which dies on GPU faults.
-import threading as _t, urllib.request as _ur
+# ── Llama-server health monitor (GPU-aware, auto-restart on crash) ────
+# Polls both HTTP endpoint AND GPU VRAM. On GPU fault (VRAM plummets),
+# resets the GPU before restarting. Detached process group prevents
+# signal propagation from the crashed server.
+import threading as _t, urllib.request as _ur, re as _re
+
+def _get_vram_mb() -> float:
+    """Return VRAM used in MB by parsing rocm-smi output."""
+    try:
+        out = subprocess.check_output(
+            ["rocm-smi", "--showmeminfo", "vram"],
+            timeout=10, stderr=subprocess.DEVNULL,
+        ).decode()
+        m = _re.search(r"VRAM Total Used Memory \(B\):\s*(\d+)", out)
+        if m:
+            return int(m.group(1)) / (1024 * 1024)
+    except Exception:
+        pass
+    return 0.0
+
+def _reset_gpu() -> bool:
+    """Reset the GPU via rocm-smi. Returns True if reset appeared to work."""
+    try:
+        subprocess.run(
+            ["sudo", "rocm-smi", "--reset"],
+            timeout=30, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        )
+        time.sleep(8)  # Wait for reset to complete
+        vram = _get_vram_mb()
+        return vram > 0
+    except Exception:
+        return False
 
 def _llama_health():
     _script = os.path.join(SCRIPT_DIR, "apply_local_llama.sh")
     _server = None
+    # Expected VRAM with model loaded: ~15-16 GB of 17.2 GB
+    _VRAM_LOADED_THRESHOLD = 4000  # MB — anything below means GPU fault or model not loaded
+    _CONSECUTIVE_FAILURES = 0
+
     while True:
+        # 1. Check HTTP endpoint
+        http_alive = False
         try:
             _ur.urlopen("http://127.0.0.1:11434/v1/models", timeout=5)
+            http_alive = True
         except Exception:
-            time.sleep(2)
-            try:
-                _ur.urlopen("http://127.0.0.1:11434/v1/models", timeout=5)
-            except Exception:
-                # Two failures in a row — server is definitely down
-                if _server is None or _server.poll() is not None:
-                    _flag = model or "9b"
-                    _server = subprocess.Popen(
-                        ["bash", _script, "--model", _flag, "--server-only"],
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    )
+            pass
+
+        # 2. Check GPU VRAM
+        vram = _get_vram_mb()
+        gpu_fault = vram > 0 and vram < _VRAM_LOADED_THRESHOLD
+
+        # 3. Decide if restart needed
+        needs_restart = False
+        if not http_alive:
+            _CONSECUTIVE_FAILURES += 1
+            if _CONSECUTIVE_FAILURES >= 2:
+                needs_restart = True
+        else:
+            _CONSECUTIVE_FAILURES = 0
+
+        # Even if HTTP is alive, if VRAM dropped to fault level, restart
+        if gpu_fault:
+            needs_restart = True
+
+        if needs_restart:
+            # GPU fault detected or server confirmed dead
+            if gpu_fault or vram < 100:
+                print("[llama-monitor] GPU fault detected — resetting GPU...", flush=True)
+                _reset_gpu()
+            elif not http_alive:
+                # HTTP down but VRAM looks OK — maybe the process crashed
+                # but GPU is still healthy. Still reset to be safe.
+                print("[llama-monitor] llama-server not responding — resetting GPU...", flush=True)
+                _reset_gpu()
+
+            # Kill leftover processes on the port
+            subprocess.run(
+                ["fuser", "-k", "11434/tcp"],
+                timeout=5, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            )
+            time.sleep(1)
+
+            # Start new server — detached process group so GPU faults
+            # don't propagate back to this monitor or run_apply.py
+            _flag = model or "9b"
+            print(f"[llama-monitor] Starting llama-server (--model {_flag})...", flush=True)
+            _server = subprocess.Popen(
+                ["bash", _script, "--model", _flag, "--server-only"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,  # KEY: detach from our process group
+            )
+
+            # Wait for server to come online (up to 5 min for model load)
+            _start = time.time()
+            _online = False
+            while time.time() - _start < 300:
+                try:
+                    _ur.urlopen("http://127.0.0.1:11434/v1/models", timeout=3)
+                    _online = True
+                    break
+                except Exception:
+                    time.sleep(2)
+                    # If process died, bail fast
+                    if _server.poll() is not None:
+                        print(f"[llama-monitor] New server died (exit={_server.poll()}) — will retry", flush=True)
+                        break
+
+            if _online:
+                print(f"[llama-monitor] Server back online after {time.time()-_start:.0f}s", flush=True)
+                _CONSECUTIVE_FAILURES = 0
+            else:
+                print(f"[llama-monitor] Server failed to come online", flush=True)
+
         time.sleep(15)
 
 _t.Thread(target=_llama_health, daemon=True).start()
