@@ -385,11 +385,7 @@ FAILED:not_eligible_role | FAILED:reason
 
 {captcha_section}
 
-== BUDGET ==
-After 10 calls without making progress (stuck on the same page, repeating actions),
-immediately emit RESULT:FAILED:stuck and stop. Do not repeat the same action more than 10 times.
-
 == GIVE UP ==
 Closed/expired -> EXPIRED. Page broken -> page_error. CAPTCHA unsolvable -> CAPTCHA.
-Zero progress after 5 strategies -> FAILED:stuck. Output RESULT and stop."""
+If you've exhausted all approaches, output a RESULT code explaining why."""
     return prompt
