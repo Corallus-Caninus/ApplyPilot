@@ -988,6 +988,21 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         tailored_resume=resume_text,
         dry_run=dry_run,
     )
+    # Re-add continuation context from prior session (last 3 turns only)
+    # This lets the model pick up where it left off without restarting.
+    last_session_id = job.get("last_session_id")
+    if last_session_id:
+        history = _get_recent_history(last_session_id, worker_id, max_turns=3)
+        if history:
+            agent_prompt += (
+                "\n\n== CONTINUATION (prior session lost) ==\n"
+                "A prior session for this job reached the context limit and was "
+                "interrupted. Stay on the current page. Do NOT navigate away or "
+                "re-upload the resume. Read the page to see what's already filled "
+                "and continue where the prior session left off.\n\n"
+            )
+            agent_prompt += history + "\n"
+
     # Write per-worker MCP config
     mcp_config_path = config.APP_DIR / f".mcp-apply-{worker_id}.json"
     mcp_config_path.write_text(json.dumps(_make_mcp_config(port)), encoding="utf-8")
