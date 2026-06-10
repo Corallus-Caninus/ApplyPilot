@@ -380,6 +380,9 @@ FAILED:not_eligible_role | FAILED:reason
 - Already applied? If the page shows "already applied", "in process", "submitted" for this job -> RESULT:APPLIED immediately.
 - Validation errors? Snapshot messages, fix all, retry.
 - Stuck on field? Give best answer, move on.
+- TOOL MODAL STATE: If a tool returns an error like "Tool X does not handle the modal state"
+  with "can be handled by Y", call tool Y IMMEDIATELY. Do NOT retry tool X — it will
+  keep failing. The error message tells you exactly which tool to use.
 - Workday dropdown not clicking? First try fill_form(type="combobox") in one shot. If that fails, use browser_run_code_unsafe to set the value via JS directly (instant, one call). Last resort: type into searchable dropdowns.
 - File upload hidden? Click area first. If dialog gets stuck: Escape to dismiss, then retry.
 
