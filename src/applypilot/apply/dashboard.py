@@ -224,6 +224,42 @@ def get_cache_panel() -> Panel | None:
     )
 
 
+def get_acceptance_panel() -> Panel | None:
+    """Return a panel showing the last 5 draft model acceptance rates."""
+    log_path = "/tmp/llama_apply_qwen.log"
+    if not os.path.exists(log_path):
+        return None
+    try:
+        rates = []
+        with open(log_path) as f:
+            for line in f:
+                if "draft acceptance" in line:
+                    # "draft acceptance = 0.70000 (  21 accepted /    30 generated)"
+                    m = __import__('re').search(
+                        r'acceptance = ([\d.]+) .*?(\d+) accepted / (\d+) generated',
+                        line
+                    )
+                    if m:
+                        pct = float(m.group(1)) * 100
+                        acc = m.group(2)
+                        gen = m.group(3)
+                        rates.append(f"{pct:.0f}% ({acc}/{gen})")
+        last5 = rates[-5:] if len(rates) >= 5 else rates
+        if not last5:
+            return None
+        lines = [f"  {r}" for r in last5]
+        avg = sum(float(r.split("%")[0]) for r in rates) / len(rates)
+        lines.append(f"  [bold]Avg: {avg:.0f}%[/bold]")
+        return Panel(
+            "\n".join(lines),
+            title=f"[bold]Draft Acceptance[/bold] (last {min(5, len(rates))})",
+            border_style="green",
+            height=len(lines) + 2,
+        )
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # State mutation helpers
 # ---------------------------------------------------------------------------
@@ -426,6 +462,11 @@ def render_full() -> Table | Group:
     cache_panel = get_cache_panel()
     if cache_panel:
         panels.append(cache_panel)
+
+    # Show draft acceptance panel below cache
+    accept_panel = get_acceptance_panel()
+    if accept_panel:
+        panels.append(accept_panel)
 
     # Show agent output panel
     agent_panel = get_agent_output_panel()
