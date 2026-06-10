@@ -1213,7 +1213,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 
                 if status_key == "applied":
                     add_event(f"[W{worker_id}] APPLIED via {label} ({elapsed}s): {job['title'][:30]}")
-                    # ── Save the page for manual verification ──────────────────────
+                    # ── Save the confirmation page in the DB ───────────────────────
                     _port = 9515 + worker_id
                     try:
                         import urllib.request, json as _j
@@ -1235,11 +1235,14 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                             _wsc.close()
                             _page_text = (_resp.get("result",{}).get("result",{})
                                           .get("value",""))
-                            _dump = config.LOG_DIR / f"confirmation_{ts}_w{worker_id}_{job.get('site','unknown')[:15]}.txt"
-                            _dump.write_text(_page_text)
-                            add_event(f"[W{worker_id}] Page saved to {_dump.name}")
-                    except Exception as _e:
-                        add_event(f"[W{worker_id}] Page save: {_e}")
+                            from applypilot.database import get_connection
+                            _conn = get_connection()
+                            _conn.execute("ALTER TABLE jobs ADD COLUMN confirmation_page TEXT")
+                            _conn.execute("UPDATE jobs SET confirmation_page = ? WHERE url = ?",
+                                          (_page_text, job["url"]))
+                            _conn.commit()
+                    except Exception:
+                        pass  # Non-critical — best-effort capture
 
                     update_state(worker_id, status="applied",
                                  last_action=f"APPLIED via {label} ({elapsed}s)")
