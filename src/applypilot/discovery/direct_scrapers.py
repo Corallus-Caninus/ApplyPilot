@@ -304,12 +304,98 @@ def scrape_databricks(queries: list[str] | None = None) -> dict:
     return {"new": n, "existing": e, "errors": err}
 
 
+# ── Oracle (Oracle Cloud HCM) ────────────────────────────────────────────
+
+ORACLE_SEARCH_URL = "https://careers.oracle.com/en/sites/jobsearch"
+
+def scrape_oracle(queries: list[str] | None = None) -> dict:
+    """Scrape Oracle careers via Playwright + CDP.
+
+    Oracle uses Oracle Cloud HCM (Redwood/OJET) which is JS-rendered.
+    Requires a running Chrome instance on CDP port 9516 (the apply bot's
+    browser).  Connects to it, navigates to the careers search, and
+    intercepts the XHR response containing job listings.
+    """
+    import asyncio
+    from playwright.async_api import async_playwright
+
+    if queries is None:
+        queries = ["AI/ML Engineer", "Machine Learning Engineer",
+                    "Software Engineer", "ML Engineer"]
+
+    init_db()
+    new = 0
+    existing = 0
+    errors = 0
+
+    async def _run():
+        nonlocal new, existing, errors
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp("http://localhost:9516")
+            page = await browser.new_page()
+
+            for query in queries:
+                try:
+                    job_bodies = []
+                    page.on("response", lambda resp: asyncio.ensure_future(
+                        _capture(resp, job_bodies)
+                    ))
+
+                    await page.goto(ORACLE_SEARCH_URL,
+                                    wait_until="domcontentloaded", timeout=20000)
+                    await asyncio.sleep(2)
+
+                    inp = await page.query_selector("input")
+                    if inp:
+                        await inp.click()
+                        await inp.fill(query)
+                        await page.keyboard.press("Enter")
+                        await asyncio.sleep(4)
+
+                    for data in job_bodies:
+                        body = data["body"]
+                        if "items" not in body:
+                            continue
+                        for item in body["items"]:
+                            reqs = item.get("requisitionList", [])
+                            for r in reqs:
+                                title = (r.get("Title") or "").strip()
+                                loc = (r.get("Location") or r.get("workLocation") or "").strip()
+                                req_id = r.get("RequisitionId", "")
+                                if not title or not req_id:
+                                    continue
+                                url = f"https://careers.oracle.com/en/sites/jobsearch/job/{req_id}"
+                                if _store_job(url, title, "Oracle", loc, url):
+                                    new += 1
+                                else:
+                                    existing += 1
+                except Exception as e:
+                    log.warning("Oracle query '%s' failed: %s", query, e)
+                    errors += 1
+
+            await page.close()
+        return new, existing, errors
+
+    async def _capture(response, results):
+        url = response.url
+        if "recruitingCEJobRequisitions" in url and "expand=" in url:
+            try:
+                body = await response.json()
+                results.append({"url": url, "body": body})
+            except Exception:
+                pass
+
+    asyncio.run(_run())
+    return {"new": new, "existing": existing, "errors": errors}
+
+
 # ── Runner registry ───────────────────────────────────────────────────────
 
 SCRAPERS = {
     "Microsoft": scrape_microsoft,
     "Google": scrape_google,
     "Databricks": scrape_databricks,
+    "Oracle": scrape_oracle,
 }
 
 
