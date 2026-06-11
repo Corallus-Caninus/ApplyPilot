@@ -96,7 +96,7 @@ if provider == "local":
     if model:
         os.environ["LLM_MODEL"] = model
 
-BASE_CDP_PORT = 9515
+BASE_CDP_PORT = 9516  # use 9516 to avoid conflicting with user's personal Hermes on 9515
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CHROME_SCRIPT = os.path.join(SCRIPT_DIR, "start-chrome.sh")
 MCP_SCRIPT = os.path.join(SCRIPT_DIR, "start-mcp.sh")

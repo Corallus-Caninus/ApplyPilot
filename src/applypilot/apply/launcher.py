@@ -279,11 +279,12 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         # Give it a generous timeout so the LLM summary completes instead
         # of leaving a stale task that triggers should_stop on the next call.
         _cfg["auxiliary"]["compression"]["timeout"] = None  # no timeout — server is idle, only request running
-        # Register Playwright MCP server — Hermes manages its lifecycle
+        # Register Playwright MCP server — Hermes manages its lifecycle.
+        # Port 9516 to avoid conflicting with user's personal Hermes on 9515.
         _cfg.setdefault("mcp_servers", {}).setdefault("playwright", {
             "command": "npx",
             "args": ["-y", "@playwright/mcp@latest",
-                     "--cdp-endpoint=http://localhost:9515",
+                     "--cdp-endpoint=http://localhost:9516",
                      "--viewport-size=1280x900"],
             "timeout": 300,
             "connect_timeout": 30,
@@ -826,7 +827,7 @@ def gen_prompt(target_url: str, min_score: int = 7,
     prompt_file.write_text(prompt, encoding="utf-8")
 
     # Write MCP config for reference
-    port = 9515 + worker_id
+    port = 9516 + worker_id  # 9516 to avoid conflicting with user's personal Hermes on 9515
     mcp_path = config.APP_DIR / f".mcp-apply-{worker_id}.json"
     mcp_path.write_text(json.dumps(_make_mcp_config(port)), encoding="utf-8")
 
@@ -1251,7 +1252,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                 if status_key == "applied":
                     add_event(f"[W{worker_id}] APPLIED via {label} ({elapsed}s): {job['title'][:30]}")
                     # ── Save the confirmation page in the DB ───────────────────────
-                    _port = 9515 + worker_id
+                    _port = 9516 + worker_id
                     try:
                         import urllib.request, json as _j
                         _targets = _j.loads(urllib.request.urlopen(
@@ -1447,7 +1448,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
     continuous = limit == 0
     jobs_done = 0
     empty_polls = 0
-    port = 9515 + worker_id  # match run_apply.py's base port for Chrome started via start-chrome.sh
+    port = 9516 + worker_id  # match run_apply.py's base port (9516 avoids user's 9515)
 
     # Build the effective provider chain
     if provider_chain:
