@@ -252,9 +252,10 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         _cfg["model"]["context_length"] = _ctx
         # Hermes manages a 64K token budget; llama-server has 96K headroom.
         # Preflight compression fires at 90% of Hermes' budget (~57.6K).
-        # This runs BEFORE the API call (line 430 in conversation_loop.py),
-        # so there's no in-flight generation to cancel — the should_stop
-        # crash that affected streaming + compression is avoided.
+        # This runs BEFORE the API call (conversation_loop.py:430), so
+        # the server is idle — compression is the ONLY thing running.
+        # Give it a generous timeout so the LLM summary actually finishes
+        # instead of leaving a stale task that triggers should_stop.
         _cfg.setdefault("agent", {}).setdefault("context_compressor", {})
         _cfg["agent"]["context_compressor"]["enabled"] = True
         _cfg["agent"]["context_compressor"]["threshold"] = 0.90
@@ -274,6 +275,10 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
                          "approval", "mcp", "title_generation", "triage_specifier",
                          "kanban_decomposer", "profile_describer", "curator"):
             _cfg.setdefault("auxiliary", {}).setdefault(_aux_key, {}).update(_aux_cfg)
+        # Compression runs as the ONLY request on the server (preflight).
+        # Give it a generous timeout so the LLM summary completes instead
+        # of leaving a stale task that triggers should_stop on the next call.
+        _cfg["auxiliary"]["compression"]["timeout"] = 600  # 10 minutes
         # Register Playwright MCP server — Hermes manages its lifecycle
         _cfg.setdefault("mcp_servers", {}).setdefault("playwright", {
             "command": "npx",
