@@ -1175,30 +1175,26 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 
             # Scan output lines in REVERSE for agent's final RESULT
             output_lines = output.split("\n")
+            # Parse result lines — only match at LINE START so prompt text
+            # like "-> RESULT:CAPTCHA" or "| RESULT:APPLIED" isn't parsed.
             result_line = None
-            for i in range(len(output_lines) - 1, -1, -1):
-                line = output_lines[i].strip()
-                if "RESULT:APPLIED" in line:
+            for i, line in enumerate(output_lines):
+                _s = line.strip()
+                if _s.startswith("RESULT:APPLIED"):
                     result_line = ("applied", "applied")
-                    break
-                elif "RESULT:FAILED" in line:
-                    reason = (
-                        line.split("RESULT:FAILED:")[-1].strip()
-                        if ":FAILED:" in line
-                        else "unknown"
-                    )
+                    # keep scanning — last RESULT wins
+                elif _s.startswith("RESULT:FAILED:"):
+                    reason = _s.split("RESULT:FAILED:", 1)[-1].strip()
                     reason = _clean_reason(reason)
                     result_line = (f"failed:{reason}", reason)
-                    break
-                elif "RESULT:EXPIRED" in line:
+                elif _s.startswith("RESULT:FAILED"):
+                    result_line = ("failed:unknown", "unknown")
+                elif _s.startswith("RESULT:EXPIRED"):
                     result_line = ("expired", "expired")
-                    break
-                elif "RESULT:CAPTCHA" in line:
+                elif _s.startswith("RESULT:CAPTCHA"):
                     result_line = ("captcha", "captcha")
-                    break
-                elif "RESULT:LOGIN_ISSUE" in line:
+                elif _s.startswith("RESULT:LOGIN_ISSUE"):
                     result_line = ("login_issue", "login_issue")
-                    break
 
             if result_line:
                 status_key, display_status = result_line
