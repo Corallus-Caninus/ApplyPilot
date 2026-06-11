@@ -69,9 +69,9 @@ def _is_sales_job(title: str | None) -> bool:
 def _resolve_url(url: str, timeout: int = 15) -> str:
     """Follow HTTP redirects to find the final destination URL.
 
-    Used after DNS check passes.  Returns the final (post-redirect) URL on
-    success, or the original URL on any failure so discovery is not blocked
-    by a single flaky endpoint.
+    Returns the final (post-redirect) URL on success, or the original URL on
+    any failure so discovery is not blocked by a single flaky endpoint.
+    DNS resolution is handled implicitly by the HTTP client.
     """
     import urllib.request
     for method in ('HEAD', 'GET'):
