@@ -81,10 +81,8 @@ case "$MODEL_FLAG" in
         MODEL_LABEL="Qwen 3.5 9B (20-token spec-draft)"
         MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-9B-MTP-Q4_K_M.gguf"
         # 9B-MTP Q4_K_M ~5.6GB + 0.8B draft ~0.8GB
-        # 0.8B drafts 20 tokens autoregressively, 9B verifies in batch
-        # 48K context — 96K was crashing at 98% VRAM (GPU page fault)
-        # At 48K, KV cache + checkpoints leave ~4-5 GB headroom
-        MODEL_CTX=48000
+        # 64K context — when exceeded, Hermes restarts with continuation prompt
+        MODEL_CTX=64000
         NGL=33
         MTP_FLAGS=""
         ;;

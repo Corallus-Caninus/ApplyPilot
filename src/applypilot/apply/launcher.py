@@ -245,7 +245,7 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         elif "lfm" in _model_name:
             _ctx = 128000   # MoE with 1B active → very small KV, full 128K fits
         elif "9b" in _model_name or "8b" in _model_name:
-            _ctx = 48000   # match server -c 48000 (96K caused GPU page faults)
+            _ctx = 64000   # server -c 64000 — exceeds → restart Hermes with continuation
         else:
             _ctx = 64000
         _cfg["model"]["context_length"] = _ctx
@@ -1294,6 +1294,8 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                 continue
 
             add_event(f"[W{worker_id}] NO RESULT ({elapsed}s)")
+            _save_session_id(job["url"], session_id)
+            _capture_fields_async(worker_id, session_id or "")
             update_state(worker_id, status="failed", last_action=f"no result ({elapsed}s)")
             return "failed:no_result_line", duration_ms
 
