@@ -254,18 +254,18 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         # requests (prefill at 48 t/s × 7K tokens = ~145s), triggering
         # retry → should_stop loops on single-server setups.
         _cfg.setdefault("providers", {}).setdefault("custom", {})["request_timeout_seconds"] = 600
-        # Disable LLM-based compression summarizer — the local qwen3.5:9b
-        # has only 24K context, but the summarization prompt exceeds that
-        # (28K+).  The attempt triggers a bail-out in Hermes' feasibility
-        # check that KILLS the entire session ("Goodbye!") instead of
-        # gracefully falling back to message dropping.
-        # The message-dropping context_compressor handles compression
-        # without any LLM call — keeps sessions alive without crashing.
+        # Enable LLM compression summarizer with context_length override.
+        # The local llama-server runs with -c 96000, but the model's
+        # detected n_ctx may be lower (24K), which triggers a ValueError
+        # in Hermes' feasibility check (needs 64K minimum).  Overriding
+        # context_length bypasses that check.  The timeout ensures
+        # summarization fails fast and falls back gracefully if the
+        # server is overloaded.
         _cfg.setdefault("agent", {}).setdefault("context_compressor", {})
         _cfg["agent"]["context_compressor"]["enabled"] = True
         _cfg["agent"]["context_compressor"]["threshold"] = 0.80
         _cfg["compression"] = {
-            "enabled": False,
+            "enabled": True,
         }
         # Pin all auxiliary models to the same local provider — otherwise they
         # default to 'auto' which tries OpenCode API and fails with 401.
@@ -280,9 +280,14 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
                          "approval", "mcp", "title_generation", "triage_specifier",
                          "kanban_decomposer", "profile_describer", "curator"):
             _cfg.setdefault("auxiliary", {}).setdefault(_aux_key, {}).update(_aux_cfg)
-        # Compression auxiliary model config is set by the loop above but
-        # never used (compression summarizer disabled — the message-dropping
-        # context_compressor handles compression without an LLM call).
+        # Override compression model's detected context length so Hermes'
+        # feasibility check (which requires 64K minimum) doesn't crash.
+        # The server runs with -c 96000, so the actual capacity is there.
+        _cfg.setdefault("auxiliary", {}).setdefault("compression", {})
+        _cfg["auxiliary"]["compression"]["context_length"] = 96000
+        # Short timeout so a slow summarization call falls back to message
+        # dropping instead of blocking the main request indefinitely.
+        _cfg["auxiliary"]["compression"]["timeout"] = 10
         # Register Playwright MCP server — Hermes manages its lifecycle.
         # Port 9516 to avoid conflicting with user's personal Hermes on 9515.
         # Use DIRECT assignment (not setdefault) to override user's global config
