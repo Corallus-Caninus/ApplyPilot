@@ -66,6 +66,35 @@ def _is_sales_job(title: str | None) -> bool:
     return config.is_sales_job(title)
 
 
+def _is_valid_job_url(url: str, apply_url: str | None = None) -> bool:
+    """Check that a URL looks like a specific job posting, not a generic careers page.
+
+    Generic career pages (/careers, /jobs, /search, company homepage) don't
+    point to a specific job — the bot can't apply from them.  A valid job URL
+    has a job ID, requisition number, or unique path segment in its path.
+    """
+    import re as _re
+    # PostgreSQL / Workday / Greenhouse job IDs
+    if _re.search(r'/\d{5,}', url):
+        return True
+    # Query parameters that indicate a specific job
+    if _re.search(r'[?&](gh_jid|jobId|job_id|req_id|jobNumber|postingId)=', url, _re.I):
+        return True
+    # Requisition IDs like R0123456 or JR001234
+    if _re.search(r'/(R\d{5,}|JR\d{4,}|JOB\d{4,})', url, _re.I):
+        return True
+    # LinkedIn job view pages
+    if '/jobs/view/' in url:
+        return True
+    # Indeed job pages
+    if '/viewjob?' in url or 'indeed.com/viewjob' in url:
+        return True
+    # Generic landing page patterns — reject
+    if _re.search(r'/careers/?$|/careers/search|/jobs/?$|/open-positions/?$|/search/?$', url):
+        return False
+    return True  # unknown patterns pass through
+
+
 def _store_job(url: str, title: str, site: str, location: str | None = None,
                apply_url: str | None = None, description: str | None = None) -> bool:
     """Store a job in the database if new. Filters out non-remote and sales jobs."""
@@ -74,6 +103,8 @@ def _store_job(url: str, title: str, site: str, location: str | None = None,
     if _is_sales_job(title):
         return False
     if not config.is_computer_engineering_role(title):
+        return False
+    if not _is_valid_job_url(url, apply_url):
         return False
     conn = get_connection()
     now = datetime.now(timezone.utc).isoformat()

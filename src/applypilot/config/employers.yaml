@@ -256,6 +256,44 @@ employers:
     site_id: "IBM_Careers"
     base_url: "https://ibm.wd5.myworkdayjobs.com"
 
+  # ── Fortune 500 ─────────────────────────────────────────────────────────
+
+  jpmorgan_chase:
+    name: "JPMorgan Chase"
+    tenant: "jpmc"
+    site_id: "jpmc"
+    base_url: "https://jpmc.wd1.myworkdayjobs.com"
+
+  walmart:
+    name: "Walmart"
+    tenant: "walmart"
+    site_id: "Walmart"
+    base_url: "https://walmart.wd5.myworkdayjobs.com"
+
+  unitedhealth:
+    name: "UnitedHealth Group"
+    tenant: "unitedhealthgroup"
+    site_id: "uhg"
+    base_url: "https://unitedhealthgroup.wd1.myworkdayjobs.com"
+
+  palo_alto_networks:
+    name: "Palo Alto Networks"
+    tenant: "paloaltonetworks"
+    site_id: "PaloAltoNetworks"
+    base_url: "https://paloaltonetworks.wd1.myworkdayjobs.com"
+
+  crowdstrike:
+    name: "CrowdStrike"
+    tenant: "crowdstrike"
+    site_id: "CrowdStrike"
+    base_url: "https://crowdstrike.wd1.myworkdayjobs.com"
+
+  att:
+    name: "AT&T"
+    tenant: "att"
+    site_id: "ATT"
+    base_url: "https://att.wd5.myworkdayjobs.com"
+
   # ── Consulting ──────────────────────────────────────────────────────────
 
   pwc:
