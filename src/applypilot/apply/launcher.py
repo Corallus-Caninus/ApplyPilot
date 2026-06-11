@@ -281,14 +281,16 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         _cfg["auxiliary"]["compression"]["timeout"] = None  # no timeout — server is idle, only request running
         # Register Playwright MCP server — Hermes manages its lifecycle.
         # Port 9516 to avoid conflicting with user's personal Hermes on 9515.
-        _cfg.setdefault("mcp_servers", {}).setdefault("playwright", {
+        # Use DIRECT assignment (not setdefault) to override user's global config
+        # which may have a different CDP endpoint (e.g. 9515).
+        _cfg.setdefault("mcp_servers", {})["playwright"] = {
             "command": "npx",
             "args": ["-y", "@playwright/mcp@latest",
                      "--cdp-endpoint=http://localhost:9516",
                      "--viewport-size=1280x900"],
             "timeout": 300,
             "connect_timeout": 30,
-        })
+        }
         # Register credential + email tools as a native MCP server
         _mcp_py = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../applypilot_mcp_server.py"))
         if os.path.exists(_mcp_py):
