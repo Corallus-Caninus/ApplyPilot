@@ -438,6 +438,11 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str,
         # This way we apply on the company's own ATS, not on Indeed/LinkedIn
         site_label = _derive_site_from_url(apply_url, company, site_label)
 
+        # Resolve redirects — use the final URL as PK so duplicate landing
+        # pages deduplicate to one entry
+        from applypilot.discovery.direct_scrapers import _resolve_url
+        url = _resolve_url(url)
+
         try:
             conn.execute(
                 "INSERT INTO jobs (url, title, salary, description, location, site, strategy, discovered_at, "

@@ -300,6 +300,10 @@ def store_results(conn: sqlite3.Connection, jobs: list[dict], employers: dict) -
         site = job.get("employer_name", "Corporate")
         strategy = "workday_api"
 
+        # Resolve redirects — use final URL as PK for dedup across listings
+        from applypilot.discovery.direct_scrapers import _resolve_url
+        url = _resolve_url(url)
+
         try:
             conn.execute(
                 "INSERT INTO jobs (url, title, salary, description, location, site, strategy, "
