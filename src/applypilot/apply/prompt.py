@@ -278,7 +278,8 @@ or "do not enter if you're human." This is an anti-bot TRAP. NEVER fill these fi
 Leave them completely empty. If you see one, IGNORE IT — don't even mention it.
 
 == NEVER DO (RESULT:FAILED) ==
-Camera/mic/screen/location permissions, video/selfie/biometric, freelancing/contract platforms, browser extensions, payment/SSN. Not a real job app -> not_a_job_application.
+Freelancing/contract platforms (Upwork, Fiverr, etc.) — not a real job app -> RESULT:FAILED:not_a_job_application.
+Camera/mic/screen/location permissions, video/selfie/biometric, browser extensions, payment/SSN — cannot fulfill -> RESULT:FAILED:unsupported_requirement.
 
 == DIALOGS ==
 Never kill MCP. handle_dialog(accept=false). If fails: Chrome should auto-restart (start-chrome.sh wrapper handles this).
@@ -367,7 +368,7 @@ EARLY BAIL (if any match, output RESULT and STOP immediately):
 == RESULT CODES ==
 APPLIED | EXPIRED | CAPTCHA | LOGIN_ISSUE
 FAILED:not_eligible_location | FAILED:not_eligible_work_auth
-FAILED:not_eligible_role | FAILED:reason
+FAILED:not_eligible_role | FAILED:unsupported_requirement | FAILED:reason
 
 == TIPS ==
 - Use target="ref" format (e.g. target="e47")
