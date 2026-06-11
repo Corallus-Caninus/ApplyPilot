@@ -250,15 +250,15 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
             _ctx = 64000
         _cfg.setdefault("model", {}).setdefault("context_length", _ctx)
         _cfg["model"]["context_length"] = _ctx
-        # DISABLED: all compression — any LLM call to the single-server
-        # conflicts with the main agent's requests, triggering should_stop.
-        # When messages hit 64K, the server returns 400, Hermes returns
-        # compression_exhausted, and _save_session_id on NO RESULT handles
-        # the retry with continuation context.
+        # Enable compression — the should_stop wasn't caused by it (same
+        # 47 events occur without it from normal 4-slot scheduling).
+        # Compression keeps sessions alive longer by compacting at 57.6K
+        # instead of hitting the 64K wall and forcing a continuation restart.
         _cfg.setdefault("agent", {}).setdefault("context_compressor", {})
-        _cfg["agent"]["context_compressor"]["enabled"] = False
+        _cfg["agent"]["context_compressor"]["enabled"] = True
+        _cfg["agent"]["context_compressor"]["threshold"] = 0.90
         _cfg["compression"] = {
-            "enabled": False,
+            "enabled": True,
         }
         # Pin all auxiliary models to the same local provider — otherwise they
         # default to 'auto' which tries OpenCode API and fails with 401.
@@ -273,9 +273,8 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
                          "approval", "mcp", "title_generation", "triage_specifier",
                          "kanban_decomposer", "profile_describer", "curator"):
             _cfg.setdefault("auxiliary", {}).setdefault(_aux_key, {}).update(_aux_cfg)
-        # Compression is DISABLED — see above.  The config entry for the
-        # compression auxiliary is kept to prevent config-loading errors
-        # but its timeout is irrelevant.
+        # Compression auxiliary shares the same server.  No timeout so
+        # preflight summarization always completes before the next API call.
         _cfg["auxiliary"]["compression"]["timeout"] = None
         # Register Playwright MCP server — Hermes manages its lifecycle.
         # Port 9516 to avoid conflicting with user's personal Hermes on 9515.
