@@ -1186,23 +1186,30 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             # Parse result lines — only match at LINE START so prompt text
             # like "-> RESULT:CAPTCHA" or "| RESULT:APPLIED" isn't parsed.
             result_line = None
+            result_idx = -1
             for i, line in enumerate(output_lines):
                 _s = line.strip()
                 if _s.startswith("RESULT:APPLIED"):
                     result_line = ("applied", "applied")
+                    result_idx = i
                     # keep scanning — last RESULT wins
                 elif _s.startswith("RESULT:FAILED:"):
                     reason = _s.split("RESULT:FAILED:", 1)[-1].strip()
                     reason = _clean_reason(reason)
                     result_line = (f"failed:{reason}", reason)
+                    result_idx = i
                 elif _s.startswith("RESULT:FAILED"):
                     result_line = ("failed:unknown", "unknown")
+                    result_idx = i
                 elif _s.startswith("RESULT:EXPIRED"):
                     result_line = ("expired", "expired")
+                    result_idx = i
                 elif _s.startswith("RESULT:CAPTCHA"):
                     result_line = ("captcha", "captcha")
+                    result_idx = i
                 elif _s.startswith("RESULT:LOGIN_ISSUE"):
                     result_line = ("login_issue", "login_issue")
+                    result_idx = i
 
             if result_line:
                 status_key, display_status = result_line
@@ -1210,7 +1217,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                 # URL verification for APPLIED — reject if no confirmation URL follows.
                 # Hallucinated APPLIED results should retry the SAME job, not fail it.
                 if status_key == "applied":
-                    _url_line = output_lines[i + 1].strip() if i + 1 < len(output_lines) else ""
+                    _url_line = output_lines[result_idx + 1].strip() if result_idx + 1 < len(output_lines) else ""
                     if not _url_line.startswith("http"):
                         add_event(f"[W{worker_id}] APPLIED claimed without confirmation URL — retrying job")
                         # Keep the lock — retry the same job immediately
@@ -1454,6 +1461,8 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
     jobs_done = 0
     empty_polls = 0
     port = 9516 + worker_id  # match run_apply.py's base port (9516 avoids user's 9515)
+    hallucination_retries = 0  # per-job counter to prevent infinite APPLIED retry loops
+    last_job_url = None
 
     # Build the effective provider chain
     if provider_chain:
@@ -1489,6 +1498,11 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
 
         empty_polls = 0
 
+        # Reset hallucination retry counter when we move to a new job
+        if job["url"] != last_job_url:
+            hallucination_retries = 0
+            last_job_url = job["url"]
+
         chrome_proc = None
         try:
             # Use user's already-running Chrome on port 9515 instead of launching a new instance
@@ -1503,9 +1517,22 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                 add_event(f"[W{worker_id}] Skipped: {job['title'][:30]}")
                 continue
             elif result == "hallucinated_applied":
-                add_event(f"[W{worker_id}] Hallucinated APPLIED — retrying same job")
-                # Lock is still held — re-run the job immediately
-                continue
+                hallucination_retries += 1
+                release_lock(job["url"])
+                if hallucination_retries >= 3:
+                    add_event(f"[W{worker_id}] APPLIED hallucinated {hallucination_retries}x — marking failed")
+                    mark_result(job["url"], "failed", "hallucinated_applied",
+                                duration_ms=duration_ms)
+                    failed += 1
+                    update_state(worker_id, jobs_failed=failed,
+                                 jobs_done=applied + failed)
+                    add_completed_job(
+                        job['title'], job.get('site', ''),
+                        job.get('fit_score'), 'hallucinated_applied',
+                        f"{duration_ms // 60000}m{duration_ms // 1000 % 60}s" if duration_ms else "",
+                    )
+                else:
+                    add_event(f"[W{worker_id}] Hallucinated APPLIED ({hallucination_retries}/3) — retrying same job")
             elif result == "applied":
                 mark_result(job["url"], "applied", duration_ms=duration_ms)
                 applied += 1
