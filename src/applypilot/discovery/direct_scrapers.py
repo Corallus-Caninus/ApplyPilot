@@ -395,6 +395,86 @@ def scrape_oracle(queries: list[str] | None = None) -> dict:
     return {"new": new, "existing": existing, "errors": errors}
 
 
+# ── IBM (Avature platform) ─────────────────────────────────────────────
+
+IBM_CAREERS_URL = "https://careers.ibm.com/en_US/careers"
+
+def scrape_ibm(queries: list[str] | None = None) -> dict:
+    """Scrape IBM careers via Playwright + CDP.
+
+    IBM uses Avature portal with JS-rendered job listings.  Connects to
+    the bot's Chrome on port 9516 and extracts job data from the page.
+    """
+    import asyncio
+    from playwright.async_api import async_playwright
+    import re
+
+    if queries is None:
+        queries = ["AI", "ML", "Software Engineer"]
+
+    init_db()
+    new = 0
+    existing = 0
+    errors = 0
+
+    async def _run():
+        nonlocal new, existing, errors
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp("http://localhost:9516")
+            page = await browser.new_page()
+
+            for query in queries:
+                try:
+                    await page.goto(IBM_CAREERS_URL,
+                                    wait_until="domcontentloaded", timeout=20000)
+                    await asyncio.sleep(3)
+
+                    # Type search query and click Search
+                    search_input = await page.query_selector("input[placeholder*='Search'], input:not([type])")
+                    if search_input:
+                        await search_input.click()
+                        await search_input.fill(query)
+                        search_btn = await page.query_selector("button:has-text('Search')")
+                        if search_btn:
+                            await search_btn.click()
+                            await asyncio.sleep(4)
+                        else:
+                            await page.keyboard.press("Enter")
+                            await asyncio.sleep(4)
+
+                    # Extract job listings from page text
+                    text = await page.evaluate("() => document.body.innerText")
+                    lines = [l.strip() for l in text.split("\n") if l.strip()]
+
+                    i = 0
+                    while i < len(lines):
+                        line = lines[i]
+                        if line.startswith('"') and line.endswith('"'):
+                            title = line.strip('"')
+                            level = lines[i + 1] if i + 1 < len(lines) else ""
+                            location = lines[i + 2] if i + 2 < len(lines) else ""
+                            if level and location:
+                                # Get job URL from the link
+                                url = f"https://careers.ibm.com/en_US/careers/job?q={title}"
+                                if _store_job(url, title, "IBM", location, url):
+                                    new += 1
+                                else:
+                                    existing += 1
+                                i += 3
+                                continue
+                        i += 1
+
+                except Exception as e:
+                    log.warning("IBM query '%s' failed: %s", query, e)
+                    errors += 1
+
+            await page.close()
+        return new, existing, errors
+
+    asyncio.run(_run())
+    return {"new": new, "existing": existing, "errors": errors}
+
+
 # ── Runner registry ───────────────────────────────────────────────────────
 
 SCRAPERS = {
@@ -402,6 +482,7 @@ SCRAPERS = {
     "Google": scrape_google,
     "Databricks": scrape_databricks,
     "Oracle": scrape_oracle,
+    "IBM": scrape_ibm,
 }
 
 
