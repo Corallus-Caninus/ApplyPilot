@@ -66,45 +66,46 @@ def _is_sales_job(title: str | None) -> bool:
     return config.is_sales_job(title)
 
 
-def _is_valid_job_url(url: str, apply_url: str | None = None) -> bool:
-    """Check that a URL looks like a specific job posting, not a generic careers page.
+def _resolve_url(url: str, timeout: int = 5) -> str:
+    """Follow redirects to get the final URL.
 
-    Generic career pages (/careers, /jobs, /search, company homepage) don't
-    point to a specific job — the bot can't apply from them.  A valid job URL
-    has a job ID, requisition number, or unique path segment in its path.
+    Used to detect jobs whose listing pages redirect to a generic career
+    site or external ATS.  Returns the resolved URL on success, or the
+    original URL on any failure (timeout, DNS, etc.) so discovery is not
+    blocked by a single flaky endpoint.
     """
-    import re as _re
-    # PostgreSQL / Workday / Greenhouse job IDs
-    if _re.search(r'/\d{5,}', url):
-        return True
-    # Query parameters that indicate a specific job
-    if _re.search(r'[?&](gh_jid|jobId|job_id|req_id|jobNumber|postingId)=', url, _re.I):
-        return True
-    # Requisition IDs like R0123456 or JR001234
-    if _re.search(r'/(R\d{5,}|JR\d{4,}|JOB\d{4,})', url, _re.I):
-        return True
-    # LinkedIn job view pages
-    if '/jobs/view/' in url:
-        return True
-    # Indeed job pages
-    if '/viewjob?' in url or 'indeed.com/viewjob' in url:
-        return True
-    # Generic landing page patterns — reject
-    if _re.search(r'/careers/?$|/careers/search|/jobs/?$|/open-positions/?$|/search/?$', url):
-        return False
-    return True  # unknown patterns pass through
+    import urllib.request
+    for method in ('HEAD', 'GET'):
+        try:
+            req = urllib.request.Request(
+                url, method=method,
+                headers={'User-Agent': 'Mozilla/5.0 (compatible; ApplyPilot/1.0)'},
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.url
+        except Exception:
+            continue
+    return url
 
 
 def _store_job(url: str, title: str, site: str, location: str | None = None,
                apply_url: str | None = None, description: str | None = None) -> bool:
-    """Store a job in the database if new. Filters out non-remote and sales jobs."""
+    """Store a job in the database if new. Filters out non-remote and sales jobs.
+
+    Follows redirects and uses the *resolved* URL as the primary key so that
+    multiple job listings that all bounce to the same external landing page
+    (or generic career site) are deduplicated — at most one job per landing
+    URL gets stored.
+    """
+    resolved = _resolve_url(url)
+    if resolved != url:
+        log.debug("URL resolved: %s -> %s", url, resolved)
+
     if not _is_remote_location(location):
         return False
     if _is_sales_job(title):
         return False
     if not config.is_computer_engineering_role(title):
-        return False
-    if not _is_valid_job_url(url, apply_url):
         return False
     conn = get_connection()
     now = datetime.now(timezone.utc).isoformat()
@@ -113,7 +114,7 @@ def _store_job(url: str, title: str, site: str, location: str | None = None,
             """INSERT OR IGNORE INTO jobs
                (url, title, site, strategy, discovered_at, location, application_url, full_description)
                VALUES (?, ?, ?, 'bigtech', ?, ?, ?, ?)""",
-            (url, title, site, now, location, apply_url, description),
+            (resolved, title, site, now, location, apply_url, description),
         )
         conn.commit()
         return conn.total_changes > 0
