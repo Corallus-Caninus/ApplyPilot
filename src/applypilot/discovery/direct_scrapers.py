@@ -475,6 +475,82 @@ def scrape_ibm(queries: list[str] | None = None) -> dict:
     return {"new": new, "existing": existing, "errors": errors}
 
 
+# ── AT&T (TalentBrew/Radancy platform) ───────────────────────────────
+
+ATT_SEARCH_URL = "https://www.att.jobs/search-jobs"
+
+def scrape_att(queries: list[str] | None = None) -> dict:
+    """Scrape AT&T careers (TalentBrew platform) via Playwright + CDP.
+
+    AT&T uses TalentBrew/Radancy.  Jobs are server-rendered on the
+    search page.
+    """
+    import asyncio
+    from playwright.async_api import async_playwright
+    import re
+
+    if queries is None:
+        queries = ["AI", "ML", "Engineer", "Developer", "Software"]
+
+    init_db()
+    new = 0
+    existing = 0
+    errors = 0
+
+    async def _run():
+        nonlocal new, existing, errors
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp("http://localhost:9516")
+            page = await browser.new_page()
+
+            for query in queries:
+                try:
+                    await page.goto(f"{ATT_SEARCH_URL}?q={query}",
+                                    wait_until="domcontentloaded", timeout=20000)
+                    await asyncio.sleep(4)
+
+                    # Extract job cards from the DOM
+                    jobs = await page.evaluate('''() => {
+                        const results = [];
+                        const items = document.querySelectorAll("[class*='job'], li, [class*='result']");
+                        for (const item of items) {
+                            const link = item.querySelector("a");
+                            const href = link ? link.href : "";
+                            const text = item.textContent.trim();
+                            if (href && href.includes("/job/") && text.length > 10) {
+                                const parts = text.split("\n").map(s => s.trim()).filter(Boolean);
+                                const title = parts[0] || "";
+                                const location = parts.length > 1 ? parts[1] : "";
+                                results.push({title, location, href});
+                            }
+                        }
+                        return results;
+                    }''')
+
+                    seen = set()
+                    for j in jobs:
+                        title = j["title"]
+                        loc = j["location"]
+                        url = j["href"]
+                        if not title or not url or url in seen:
+                            continue
+                        seen.add(url)
+                        if _store_job(url, title, "AT&T", loc, url):
+                            new += 1
+                        else:
+                            existing += 1
+
+                except Exception as e:
+                    log.warning("AT&T query '%s' failed: %s", query, e)
+                    errors += 1
+
+            await page.close()
+        return new, existing, errors
+
+    asyncio.run(_run())
+    return {"new": new, "existing": existing, "errors": errors}
+
+
 # ── Runner registry ───────────────────────────────────────────────────────
 
 SCRAPERS = {
@@ -483,6 +559,7 @@ SCRAPERS = {
     "Databricks": scrape_databricks,
     "Oracle": scrape_oracle,
     "IBM": scrape_ibm,
+    "AT&T": scrape_att,
 }
 
 
