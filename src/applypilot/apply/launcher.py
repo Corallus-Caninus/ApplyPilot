@@ -245,21 +245,21 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         elif "lfm" in _model_name:
             _ctx = 128000   # MoE with 1B active → very small KV, full 128K fits
         elif "9b" in _model_name or "8b" in _model_name:
-            _ctx = 64000   # server -c 64000 — exceeds → restart Hermes with continuation
+            _ctx = 64000   # Hermes budget — server has 96K, never returns 400
         else:
             _ctx = 64000
+        _cfg.setdefault("model", {}).setdefault("context_length", _ctx)
         _cfg["model"]["context_length"] = _ctx
-        # For local models with large context (128K): delay compression until
-        # near the context limit, preserve most of the conversation.
-        # Re-enable context compression to keep sessions alive past 64K
-        # This costs ~1-2 minutes per compression cycle but preserves all
-        # form-filling progress instead of forcing a continuation restart.
-        # DISABLED: the compressor's LLM calls cancel the agent's generation
-        # on single-server setups (should_stop → task cancel loop).
+        # Hermes manages a 64K token budget; llama-server has 96K headroom.
+        # Preflight compression fires at 90% of Hermes' budget (~57.6K).
+        # This runs BEFORE the API call (line 430 in conversation_loop.py),
+        # so there's no in-flight generation to cancel — the should_stop
+        # crash that affected streaming + compression is avoided.
         _cfg.setdefault("agent", {}).setdefault("context_compressor", {})
-        _cfg["agent"]["context_compressor"]["enabled"] = False
+        _cfg["agent"]["context_compressor"]["enabled"] = True
+        _cfg["agent"]["context_compressor"]["threshold"] = 0.90
         _cfg["compression"] = {
-            "enabled": False,
+            "enabled": True,
         }
         # Pin all auxiliary models to the same local provider — otherwise they
         # default to 'auto' which tries OpenCode API and fails with 401.

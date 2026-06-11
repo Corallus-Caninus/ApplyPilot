@@ -81,8 +81,8 @@ case "$MODEL_FLAG" in
         MODEL_LABEL="Qwen 3.5 9B (20-token spec-draft)"
         MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-9B-MTP-Q4_K_M.gguf"
         # 9B-MTP Q4_K_M ~5.6GB + 0.8B draft ~0.8GB
-        # 64K context — when exceeded, Hermes restarts with continuation prompt
-        MODEL_CTX=64000
+        # 96K context — server never returns 400; Hermes manages its own 64K budget
+        MODEL_CTX=96000
         NGL=33
         MTP_FLAGS=""
         ;;
