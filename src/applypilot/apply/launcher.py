@@ -686,6 +686,10 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                 FROM jobs
                 WHERE (apply_status IS NULL OR apply_status = 'failed')
                   AND (apply_attempts IS NULL OR apply_attempts < ?)
+                  AND (apply_error IS NULL OR apply_error NOT IN ('expired', 'captcha', 'login_issue',
+                       'not_eligible_location', 'not_eligible_role', 'not_eligible_work_auth',
+                       'not_a_job_application', 'unsupported_requirement', 'site_blocked',
+                       'already_applied'))
                   AND (fit_score >= ? OR fit_score IS NULL)
                   {site_clause}
                   {url_clauses}
