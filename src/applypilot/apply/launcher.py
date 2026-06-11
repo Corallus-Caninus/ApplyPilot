@@ -250,6 +250,10 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
             _ctx = 64000
         _cfg.setdefault("model", {}).setdefault("context_length", _ctx)
         _cfg["model"]["context_length"] = _ctx
+        # Raise the HTTP client timeout — the default 60s cuts off long
+        # requests (prefill at 48 t/s × 7K tokens = ~145s), triggering
+        # retry → should_stop loops on single-server setups.
+        _cfg.setdefault("providers", {}).setdefault("custom", {})["request_timeout"] = 3600
         # Enable compression — the should_stop wasn't caused by it (same
         # 47 events occur without it from normal 4-slot scheduling).
         # Compression keeps sessions alive longer by compacting at 57.6K
