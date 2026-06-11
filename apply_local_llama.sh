@@ -74,7 +74,7 @@ case "$MODEL_FLAG" in
         # 9B-MTP Q4_K_M ~5.6GB — self-drafts via MTP heads, no separate draft
         # 128K context — Hermes needs min 64K; single parallel slot gives the
         # full -c per request (was 24K before due to -c/4 with --parallel 4)
-        MODEL_CTX=128000
+        MODEL_CTX=96000
         NGL=33
         MTP_FLAGS="--spec-type draft-mtp --spec-draft-n-max 3"
         ;;
