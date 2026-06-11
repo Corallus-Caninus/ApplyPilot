@@ -299,7 +299,7 @@ else
                 --cache-type-v q8_0 \
                 --reasoning off \
                 --temp 0.3 \
-                -b 8192 \
+                -b 16384 \
                 --alias "${MODEL}" \
                 --timeout 1800 \
                 ${MTP_FLAGS:-} ${DRAFT_FLAGS:-} \
