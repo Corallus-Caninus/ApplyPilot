@@ -66,12 +66,12 @@ def _is_sales_job(title: str | None) -> bool:
     return config.is_sales_job(title)
 
 
-def _domain_resolves(url: str, timeout: int = 3) -> bool:
+def _domain_resolves(url: str, timeout: int = 10) -> bool:
     """Check if the URL's domain resolves via DNS — no HTTP request.
 
     Returns True if DNS resolution succeeds (domain exists), False otherwise.
-    A fast, lightweight check that skips jobs pointing to dead/mistyped
-    domains without needing an actual HTTP call.
+    A fast, lightweight first-pass filter that skips jobs pointing to
+    dead/mistyped domains.
     """
     import socket
     from urllib.parse import urlparse
@@ -86,17 +86,44 @@ def _domain_resolves(url: str, timeout: int = 3) -> bool:
         return False
 
 
+def _resolve_url(url: str, timeout: int = 15) -> str:
+    """Follow HTTP redirects to find the final destination URL.
+
+    Used after DNS check passes.  Returns the final (post-redirect) URL on
+    success, or the original URL on any failure so discovery is not blocked
+    by a single flaky endpoint.
+    """
+    import urllib.request
+    for method in ('HEAD', 'GET'):
+        try:
+            req = urllib.request.Request(
+                url, method=method,
+                headers={'User-Agent': 'Mozilla/5.0 (compatible; ApplyPilot/1.0)'},
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.url
+        except Exception:
+            continue
+    return url
+
+
 def _store_job(url: str, title: str, site: str, location: str | None = None,
                apply_url: str | None = None, description: str | None = None) -> bool:
     """Store a job in the database if new. Filters out non-remote and sales jobs.
 
-    Does a lightweight DNS check on the domain first — if the hostname
-    doesn't resolve (dead/mistyped domain), the job is skipped entirely
-    without any HTTP request.
+    Two-stage validation:
+      1. DNS check — skip if the domain doesn't resolve at all
+      2. HTTP redirect resolution — follow redirects and use the *final* URL
+         as the primary key so multiple listings bouncing to the same
+         landing page deduplicate to exactly one entry
     """
     if not _domain_resolves(url):
         log.debug("Skipping %s — domain does not resolve", url)
         return False
+
+    resolved = _resolve_url(url)
+    if resolved != url:
+        log.debug("URL resolved: %s -> %s", url, resolved)
 
     if not _is_remote_location(location):
         return False
@@ -111,7 +138,7 @@ def _store_job(url: str, title: str, site: str, location: str | None = None,
             """INSERT OR IGNORE INTO jobs
                (url, title, site, strategy, discovered_at, location, application_url, full_description)
                VALUES (?, ?, ?, 'bigtech', ?, ?, ?, ?)""",
-            (url, title, site, now, location, apply_url, description),
+            (resolved, title, site, now, location, apply_url, description),
         )
         conn.commit()
         return conn.total_changes > 0
