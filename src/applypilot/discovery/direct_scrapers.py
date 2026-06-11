@@ -66,26 +66,6 @@ def _is_sales_job(title: str | None) -> bool:
     return config.is_sales_job(title)
 
 
-def _domain_resolves(url: str, timeout: int = 10) -> bool:
-    """Check if the URL's domain resolves via DNS — no HTTP request.
-
-    Returns True if DNS resolution succeeds (domain exists), False otherwise.
-    A fast, lightweight first-pass filter that skips jobs pointing to
-    dead/mistyped domains.
-    """
-    import socket
-    from urllib.parse import urlparse
-    try:
-        host = urlparse(url).hostname
-        if not host:
-            return False
-        socket.setdefaulttimeout(timeout)
-        socket.getaddrinfo(host, 80)
-        return True
-    except (socket.gaierror, OSError, ValueError):
-        return False
-
-
 def _resolve_url(url: str, timeout: int = 15) -> str:
     """Follow HTTP redirects to find the final destination URL.
 
@@ -111,16 +91,11 @@ def _store_job(url: str, title: str, site: str, location: str | None = None,
                apply_url: str | None = None, description: str | None = None) -> bool:
     """Store a job in the database if new. Filters out non-remote and sales jobs.
 
-    Two-stage validation:
-      1. DNS check — skip if the domain doesn't resolve at all
-      2. HTTP redirect resolution — follow redirects and use the *final* URL
-         as the primary key so multiple listings bouncing to the same
-         landing page deduplicate to exactly one entry
+    Follows HTTP redirects and uses the *final* URL as the primary key so
+    that multiple job listings bouncing to the same landing page deduplicate
+    to exactly one entry.  DNS resolution is handled implicitly by the HTTP
+    client — no separate DNS stage needed.
     """
-    if not _domain_resolves(url):
-        log.debug("Skipping %s — domain does not resolve", url)
-        return False
-
     resolved = _resolve_url(url)
     if resolved != url:
         log.debug("URL resolved: %s -> %s", url, resolved)
