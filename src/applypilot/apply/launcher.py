@@ -245,7 +245,7 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         elif "lfm" in _model_name:
             _ctx = 128000   # MoE with 1B active → very small KV, full 128K fits
         elif "9b" in _model_name or "8b" in _model_name:
-            _ctx = 96000   # self-MTP, no draft — fits with headroom
+            _ctx = 128000   # self-MTP — 128K fits with Q8_0 KV (~14GB VRAM)
         else:
             _ctx = 64000
         _cfg.setdefault("model", {}).setdefault("context_length", _ctx)
@@ -272,7 +272,7 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         # default — no separate model configs are set.  Compression gets
         # only context_length + timeout overrides to prevent crashes.
         _cfg.setdefault("auxiliary", {}).setdefault("compression", {})
-        _cfg["auxiliary"]["compression"]["context_length"] = 96000
+        _cfg["auxiliary"]["compression"]["context_length"] = 128000
         # Generous timeout (30 min) — the local model is slow at summarization
         # with large context.  The message-dropping context_compressor runs
         # independently and keeps sessions alive while summarization happens.
