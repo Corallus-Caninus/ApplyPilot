@@ -267,8 +267,9 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         _cfg["compression"] = {
             "enabled": True,
         }
-        # Pin all auxiliary models to the same local provider — otherwise they
+        # Pin auxiliary models to the same local provider — otherwise they
         # default to 'auto' which tries OpenCode API and fails with 401.
+        # Compression is excluded — it uses the apply agent's own model.
         _aux_cfg = {
             "provider": "custom",
             "base_url": _local_url,
@@ -276,7 +277,7 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         }
         if _local_key:
             _aux_cfg["api_key"] = _local_key
-        for _aux_key in ("vision", "web_extract", "compression", "skills_hub",
+        for _aux_key in ("vision", "web_extract", "skills_hub",
                          "approval", "mcp", "title_generation", "triage_specifier",
                          "kanban_decomposer", "profile_describer", "curator"):
             _cfg.setdefault("auxiliary", {}).setdefault(_aux_key, {}).update(_aux_cfg)
