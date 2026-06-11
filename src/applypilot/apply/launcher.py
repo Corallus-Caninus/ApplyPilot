@@ -267,23 +267,10 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         _cfg["compression"] = {
             "enabled": True,
         }
-        # Pin auxiliary models to the same local provider — otherwise they
-        # default to 'auto' which tries OpenCode API and fails with 401.
-        # Compression is excluded — it uses the apply agent's own model.
-        _aux_cfg = {
-            "provider": "custom",
-            "base_url": _local_url,
-            "model": model or "qwen3.5:9b",
-        }
-        if _local_key:
-            _aux_cfg["api_key"] = _local_key
-        for _aux_key in ("vision", "web_extract", "skills_hub",
-                         "approval", "mcp", "title_generation", "triage_specifier",
-                         "kanban_decomposer", "profile_describer", "curator"):
-            _cfg.setdefault("auxiliary", {}).setdefault(_aux_key, {}).update(_aux_cfg)
-        # Override compression model's detected context length so Hermes'
-        # feasibility check (which requires 64K minimum) doesn't crash.
-        # The server runs with -c 96000, so the actual capacity is there.
+        # All auxiliary models (vision, web_extract, skills_hub, approval,
+        # title_generation, etc.) use the apply agent's main model by
+        # default — no separate model configs are set.  Compression gets
+        # only context_length + timeout overrides to prevent crashes.
         _cfg.setdefault("auxiliary", {}).setdefault("compression", {})
         _cfg["auxiliary"]["compression"]["context_length"] = 96000
         # Short timeout so a slow summarization call falls back to message
