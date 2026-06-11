@@ -245,7 +245,7 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         elif "lfm" in _model_name:
             _ctx = 128000   # MoE with 1B active → very small KV, full 128K fits
         elif "9b" in _model_name or "8b" in _model_name:
-            _ctx = 64000   # Hermes budget — server has 96K, never returns 400
+            _ctx = 48000   # server -c 48000 for 9bd (draft); 9b also fits here
         else:
             _ctx = 64000
         _cfg.setdefault("model", {}).setdefault("context_length", _ctx)
