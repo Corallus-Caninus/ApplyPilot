@@ -92,7 +92,7 @@ while true; do
         --cache-type-v q8_0 \
         --reasoning off \
         --temp 0.3 \
-        --parallel 2 \
+        --parallel 4 \
         -b 32768 \
         --alias "${MODEL}" \
         --timeout 1800 \
