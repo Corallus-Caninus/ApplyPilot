@@ -26,10 +26,8 @@ case "$MODEL_FLAG" in
         ;;
     9b|9B|9bd|9BD|9b-draft|9B-DRAFT)
         MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-9B-MTP-Q4_K_M.gguf"
-        # MTP speculator consumes 4× KV cache per step — without it, full
-        # 96K context is usable.  Use 9bd flag for separate draft model.
-        MTP_FLAGS=""
-        MODEL_CTX=96000
+        MTP_FLAGS="--spec-type draft-mtp --spec-draft-n-max 3"
+        MODEL_CTX=128000
         NGL=33
         MODEL="qwen3.5:9b"
         ;;
@@ -94,7 +92,7 @@ while true; do
         --cache-type-v q8_0 \
         --reasoning off \
         --temp 0.3 \
-        --parallel 4 \
+        --parallel 1 \
         -b 32768 \
         --alias "${MODEL}" \
         --timeout 1800 \
