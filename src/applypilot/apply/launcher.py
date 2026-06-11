@@ -250,17 +250,14 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
             _ctx = 64000
         _cfg.setdefault("model", {}).setdefault("context_length", _ctx)
         _cfg["model"]["context_length"] = _ctx
-        # Hermes manages a 64K token budget; llama-server has 96K headroom.
-        # Preflight compression fires at 90% of Hermes' budget (~57.6K).
-        # This runs BEFORE the API call (conversation_loop.py:430), so
-        # the server is idle — compression is the ONLY thing running.
-        # Give it a generous timeout so the LLM summary actually finishes
-        # instead of leaving a stale task that triggers should_stop.
+        # DISABLED: compressor initialization probe conflicts with the first
+        # main API call on single-server setup, triggering should_stop loop.
+        # Without compression, messages grow until server returns 400 at 64K,
+        # then _save_session_id + continuation restart handles the retry.
         _cfg.setdefault("agent", {}).setdefault("context_compressor", {})
-        _cfg["agent"]["context_compressor"]["enabled"] = True
-        _cfg["agent"]["context_compressor"]["threshold"] = 0.90
+        _cfg["agent"]["context_compressor"]["enabled"] = False
         _cfg["compression"] = {
-            "enabled": True,
+            "enabled": False,
         }
         # Pin all auxiliary models to the same local provider — otherwise they
         # default to 'auto' which tries OpenCode API and fails with 401.
