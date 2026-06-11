@@ -160,7 +160,11 @@ def run_bigtech_discovery(queries: list[str] | None = None) -> dict:
         from applypilot.database import get_connection
         tech_sites = ("Cisco", "NVIDIA", "Intel", "AMD", "ARM", "Qualcomm",
                       "Oracle", "IBM", "Adobe", "Salesforce", "Netflix",
-                      "ServiceNow", "DocuSign", "Uber", "Workday")
+                      "ServiceNow", "DocuSign", "Uber", "Workday",
+                      "Apple", "Capital One", "JPMorgan Chase", "Walmart",
+                      "UnitedHealth Group", "Palo Alto Networks", "CrowdStrike",
+                      "Boeing", "Lockheed Martin", "Palantir", "Bloomberg",
+                      "AT&T")
         conn = get_connection()
         placeholders = ",".join("?" * len(tech_sites))
         conn.execute(f"""
