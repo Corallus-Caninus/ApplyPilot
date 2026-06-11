@@ -5,9 +5,9 @@
 # Independent of run_apply.py — start once, leave running.
 # Usage:  ./llama-server-wrapper.sh [--model 9b|4b|9bd] [--port 11434]
 # ──────────────────────────────────────────────────────────────────────────────
-set -e
-
 # ── Config ──────────────────────────────────────────────────────────────────
+# NOTE: no set -e — the while loop handles errors manually via _exit_code.
+# Without this, a llama-server crash (non-zero exit) kills the entire script.
 MODEL_FLAG="${1:-9b}"
 LLAMA_PORT="${2:-11434}"
 HOST="127.0.0.1"
