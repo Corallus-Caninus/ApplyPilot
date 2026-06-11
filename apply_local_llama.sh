@@ -69,13 +69,14 @@ case "$MODEL_FLAG" in
         ;;
     9b|9B|8b|8B)
         MODEL="qwen3.5:9b"
-        MODEL_LABEL="Qwen 3.5 9B (MTP)"
+        MODEL_LABEL="Qwen 3.5 9B"
         MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-9B-MTP-Q4_K_M.gguf"
-        # 9B-MTP Q4_K_M ~5.6GB — self-drafts via MTP heads, no separate draft
-        # 96K context — Hermes needs min 64K; 96K with self-MTP fits easily
+        # 9B-MTP Q4_K_M ~5.6GB — no self-MTP speculator; MTP consumes 4× KV
+        # cache per step (1 main + 3 draft), reducing 96K MODEL_CTX to just
+        # 24K effective.  Without spec-type the full 96K is usable.
         MODEL_CTX=96000
         NGL=33
-        MTP_FLAGS="--spec-type draft-mtp --spec-draft-n-max 3"
+        MTP_FLAGS=""
         ;;
     9bd|9BD|9b-draft|9B-DRAFT)
         MODEL="qwen3.5:9b"
