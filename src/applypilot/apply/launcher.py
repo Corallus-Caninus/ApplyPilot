@@ -1487,7 +1487,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
         chrome_proc = None
         try:
             # Use user's already-running Chrome on port 9515 instead of launching a new instance
-            add_event(f"[W{worker_id}] Connecting to Chrome on port 9515...")
+            add_event(f"[W{worker_id}] Connecting to Chrome on port {port}...")
 
             result, duration_ms = run_job(job, port=port, worker_id=worker_id,
                                             provider_chain=active_chain,

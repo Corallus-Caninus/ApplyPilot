@@ -462,8 +462,8 @@ if [ -n "$MONITOR_PID" ]; then
     API_PORT=11435
 fi
 
-# ── Start Chrome on port 9515 (with auto-restart loop) ──────────────────
-CHROME_PORT=9515
+# ── Start Chrome on port 9516 (with auto-restart loop) ──────────────────
+CHROME_PORT=9516
 if pgrep -f "start-chrome.*${CHROME_PORT}" > /dev/null 2>&1; then
     ok "Chrome already running on port ${CHROME_PORT}"
 else
