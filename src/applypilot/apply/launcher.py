@@ -250,14 +250,15 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
             _ctx = 64000
         _cfg.setdefault("model", {}).setdefault("context_length", _ctx)
         _cfg["model"]["context_length"] = _ctx
-        # DISABLED: compressor initialization probe conflicts with the first
-        # main API call on single-server setup, triggering should_stop loop.
-        # Without compression, messages grow until server returns 400 at 64K,
-        # then _save_session_id + continuation restart handles the retry.
+        # Enable compression — preflight fires between API calls when the
+        # server is idle, so there's no should_stop conflict during normal
+        # operation.  The initialization probe uses a short timeout so it
+        # fails fast and falls back to our configured context_length.
         _cfg.setdefault("agent", {}).setdefault("context_compressor", {})
-        _cfg["agent"]["context_compressor"]["enabled"] = False
+        _cfg["agent"]["context_compressor"]["enabled"] = True
+        _cfg["agent"]["context_compressor"]["threshold"] = 0.90
         _cfg["compression"] = {
-            "enabled": False,
+            "enabled": True,
         }
         # Pin all auxiliary models to the same local provider — otherwise they
         # default to 'auto' which tries OpenCode API and fails with 401.
@@ -273,9 +274,9 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
                          "kanban_decomposer", "profile_describer", "curator"):
             _cfg.setdefault("auxiliary", {}).setdefault(_aux_key, {}).update(_aux_cfg)
         # Compression runs as the ONLY request on the server (preflight).
-        # Give it a generous timeout so the LLM summary completes instead
-        # of leaving a stale task that triggers should_stop on the next call.
-        _cfg["auxiliary"]["compression"]["timeout"] = None  # no timeout — server is idle, only request running
+        # 300s timeout gives the LLM summary enough time (~30-60s at 64K ctx).
+        # The init probe is tiny (<1s) and completes well within this window.
+        _cfg["auxiliary"]["compression"]["timeout"] = 300
         # Register Playwright MCP server — Hermes manages its lifecycle.
         # Port 9516 to avoid conflicting with user's personal Hermes on 9515.
         # Use DIRECT assignment (not setdefault) to override user's global config
