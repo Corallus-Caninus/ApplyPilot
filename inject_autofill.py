@@ -52,6 +52,7 @@ AUTOFILL_JS = f"""
   if (window.__applypilot_autofill) return;
   window.__applypilot_autofill = Date.now();
   const C = {cache_json};
+  const filled = new Set();  // never refill same field twice, even if cleared
   const N = s => typeof s === 'string' ? s.replace(/[*\\s_\\-]+/g,"").toLowerCase().trim() : '';
   const L = e => {{
     let l = e.getAttribute('aria-label') || e.getAttribute('label');
@@ -69,8 +70,11 @@ AUTOFILL_JS = f"""
     document.querySelectorAll('input:not([type=hidden]):not([type=file]),select,textarea,div[contenteditable]').forEach(e => {{
       const l = L(e);
       if (!l) return;
+      const key = l + '::' + (e.name || e.id || '');
+      if (filled.has(key)) return;  // already filled this field on this page
       const v = C[l];
       if (!v || e.value) return;
+      filled.add(key);
       if (e.tagName === 'SELECT') {{
         const m = [...e.options].find(o => o.text.toLowerCase().includes(v.toLowerCase()));
         if (m) {{ e.value = m.value; f++; }}
