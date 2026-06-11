@@ -27,7 +27,7 @@ case "$MODEL_FLAG" in
     9b|9B|9bd|9BD|9b-draft|9B-DRAFT)
         MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-9B-MTP-Q4_K_M.gguf"
         MTP_FLAGS="--spec-type draft-mtp --spec-draft-n-max 3"
-        MODEL_CTX=96000
+        MODEL_CTX=98000
         NGL=33
         MODEL="qwen3.5:9b"
         ;;
