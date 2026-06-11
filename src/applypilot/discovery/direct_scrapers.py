@@ -360,12 +360,18 @@ def scrape_oracle(queries: list[str] | None = None) -> dict:
                             reqs = item.get("requisitionList", [])
                             for r in reqs:
                                 title = (r.get("Title") or "").strip()
-                                loc = (r.get("Location") or r.get("workLocation") or "").strip()
-                                req_id = r.get("RequisitionId", "")
+                                req_id = r.get("Id", "")
                                 if not title or not req_id:
                                     continue
+                                # Build location string from available fields
+                                loc_parts = []
+                                loc = r.get("PrimaryLocation", "") or ""
+                                country = r.get("PrimaryLocationCountry", "") or ""
+                                if loc: loc_parts.append(loc)
+                                if country: loc_parts.append(country)
+                                location = ", ".join(loc_parts) if loc_parts else "Remote"
                                 url = f"https://careers.oracle.com/en/sites/jobsearch/job/{req_id}"
-                                if _store_job(url, title, "Oracle", loc, url):
+                                if _store_job(url, title, "Oracle", location, url):
                                     new += 1
                                 else:
                                     existing += 1
