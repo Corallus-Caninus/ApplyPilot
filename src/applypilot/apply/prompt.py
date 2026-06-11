@@ -153,8 +153,12 @@ Detect: browser_evaluate JS to find hcaptcha/recaptcha/turnstile sitekey.
 Solve: POST createTask -> poll getTaskResult -> inject token via browser_evaluate.
 If CapSolver fails -> MANUAL FALLBACK: try audio challenge, solve simple puzzles, then RESULT:CAPTCHA."""
     return """== CAPTCHA ==
-CapSolver NOT configured. Skip to MANUAL FALLBACK for all CAPTCHAs.
-Try audio challenge button, solve simple text/logic puzzles. Can't solve? -> RESULT:CAPTCHA."""
+CapSolver NOT configured.
+DO NOT output RESULT:CAPTCHA unless you have navigated to the job page
+and can SEE a CAPTCHA challenge (hCaptcha, reCAPTCHA, Turnstile, etc.)
+on the page. If you haven't reached the page yet, keep going.
+If you see a CAPTCHA on the page, try clicking audio challenge or
+solving simple puzzles. Truly stuck -> RESULT:CAPTCHA."""
 
 
 def build_prompt(job: dict, tailored_resume: str,
