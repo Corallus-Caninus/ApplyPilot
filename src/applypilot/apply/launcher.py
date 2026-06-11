@@ -245,7 +245,7 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         elif "lfm" in _model_name:
             _ctx = 128000   # MoE with 1B active → very small KV, full 128K fits
         elif "9b" in _model_name or "8b" in _model_name:
-            _ctx = 64000
+            _ctx = 48000   # match server -c 48000 (96K caused GPU page faults)
         else:
             _ctx = 64000
         _cfg["model"]["context_length"] = _ctx
