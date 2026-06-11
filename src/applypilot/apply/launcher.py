@@ -273,9 +273,11 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
                          "approval", "mcp", "title_generation", "triage_specifier",
                          "kanban_decomposer", "profile_describer", "curator"):
             _cfg.setdefault("auxiliary", {}).setdefault(_aux_key, {}).update(_aux_cfg)
-        # Compression auxiliary shares the same server.  No timeout so
-        # preflight summarization always completes before the next API call.
-        _cfg["auxiliary"]["compression"]["timeout"] = None
+        # Compression auxiliary shares the same server.  Short timeout so
+        # summarization fails fast and falls back to message dropping (static
+        # marker).  The drop-only path still compresses (79→12 messages)
+        # without waiting 22 minutes for an LLM summary at 74K context.
+        _cfg["auxiliary"]["compression"]["timeout"] = 10
         # Register Playwright MCP server — Hermes manages its lifecycle.
         # Port 9516 to avoid conflicting with user's personal Hermes on 9515.
         # Use DIRECT assignment (not setdefault) to override user's global config
