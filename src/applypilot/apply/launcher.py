@@ -1203,14 +1203,14 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             if result_line:
                 status_key, display_status = result_line
 
-                # URL verification for APPLIED — reject if no confirmation URL follows
+                # URL verification for APPLIED — reject if no confirmation URL follows.
+                # Hallucinated APPLIED results should retry the SAME job, not fail it.
                 if status_key == "applied":
                     _url_line = output_lines[i + 1].strip() if i + 1 < len(output_lines) else ""
                     if not _url_line.startswith("http"):
-                        add_event(f"[W{worker_id}] APPLIED claimed without confirmation URL — rejecting")
-                        status_key = "failed:no_confirmation_url"
-                        display_status = "no_confirmation_url"
-                        result_line = (status_key, display_status)
+                        add_event(f"[W{worker_id}] APPLIED claimed without confirmation URL — retrying job")
+                        # Keep the lock — retry the same job immediately
+                        return "hallucinated_applied", duration_ms
 
                 # Check if the result is actually a provider error disguised as RESULT:FAILED.
                 # Only override when the agent gave a generic reason (not a specific eligibility
@@ -1497,6 +1497,10 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
             if result == "skipped":
                 release_lock(job["url"])
                 add_event(f"[W{worker_id}] Skipped: {job['title'][:30]}")
+                continue
+            elif result == "hallucinated_applied":
+                add_event(f"[W{worker_id}] Hallucinated APPLIED — retrying same job")
+                # Lock is still held — re-run the job immediately
                 continue
             elif result == "applied":
                 mark_result(job["url"], "applied", duration_ms=duration_ms)
