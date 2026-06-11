@@ -250,15 +250,15 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
             _ctx = 64000
         _cfg.setdefault("model", {}).setdefault("context_length", _ctx)
         _cfg["model"]["context_length"] = _ctx
-        # Enable compression — preflight fires between API calls when the
-        # server is idle, so there's no should_stop conflict during normal
-        # operation.  The initialization probe uses a short timeout so it
-        # fails fast and falls back to our configured context_length.
+        # DISABLED: all compression — any LLM call to the single-server
+        # conflicts with the main agent's requests, triggering should_stop.
+        # When messages hit 64K, the server returns 400, Hermes returns
+        # compression_exhausted, and _save_session_id on NO RESULT handles
+        # the retry with continuation context.
         _cfg.setdefault("agent", {}).setdefault("context_compressor", {})
-        _cfg["agent"]["context_compressor"]["enabled"] = True
-        _cfg["agent"]["context_compressor"]["threshold"] = 0.90
+        _cfg["agent"]["context_compressor"]["enabled"] = False
         _cfg["compression"] = {
-            "enabled": True,
+            "enabled": False,
         }
         # Pin all auxiliary models to the same local provider — otherwise they
         # default to 'auto' which tries OpenCode API and fails with 401.
@@ -273,10 +273,10 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
                          "approval", "mcp", "title_generation", "triage_specifier",
                          "kanban_decomposer", "profile_describer", "curator"):
             _cfg.setdefault("auxiliary", {}).setdefault(_aux_key, {}).update(_aux_cfg)
-        # Compression runs as the ONLY request on the server (preflight).
-        # 300s timeout gives the LLM summary enough time (~30-60s at 64K ctx).
-        # The init probe is tiny (<1s) and completes well within this window.
-        _cfg["auxiliary"]["compression"]["timeout"] = 300
+        # Compression is DISABLED — see above.  The config entry for the
+        # compression auxiliary is kept to prevent config-loading errors
+        # but its timeout is irrelevant.
+        _cfg["auxiliary"]["compression"]["timeout"] = None
         # Register Playwright MCP server — Hermes manages its lifecycle.
         # Port 9516 to avoid conflicting with user's personal Hermes on 9515.
         # Use DIRECT assignment (not setdefault) to override user's global config
