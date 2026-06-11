@@ -66,40 +66,37 @@ def _is_sales_job(title: str | None) -> bool:
     return config.is_sales_job(title)
 
 
-def _resolve_url(url: str, timeout: int = 5) -> str:
-    """Follow redirects to get the final URL.
+def _domain_resolves(url: str, timeout: int = 3) -> bool:
+    """Check if the URL's domain resolves via DNS — no HTTP request.
 
-    Used to detect jobs whose listing pages redirect to a generic career
-    site or external ATS.  Returns the resolved URL on success, or the
-    original URL on any failure (timeout, DNS, etc.) so discovery is not
-    blocked by a single flaky endpoint.
+    Returns True if DNS resolution succeeds (domain exists), False otherwise.
+    A fast, lightweight check that skips jobs pointing to dead/mistyped
+    domains without needing an actual HTTP call.
     """
-    import urllib.request
-    for method in ('HEAD', 'GET'):
-        try:
-            req = urllib.request.Request(
-                url, method=method,
-                headers={'User-Agent': 'Mozilla/5.0 (compatible; ApplyPilot/1.0)'},
-            )
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return resp.url
-        except Exception:
-            continue
-    return url
+    import socket
+    from urllib.parse import urlparse
+    try:
+        host = urlparse(url).hostname
+        if not host:
+            return False
+        socket.setdefaulttimeout(timeout)
+        socket.getaddrinfo(host, 80)
+        return True
+    except (socket.gaierror, OSError, ValueError):
+        return False
 
 
 def _store_job(url: str, title: str, site: str, location: str | None = None,
                apply_url: str | None = None, description: str | None = None) -> bool:
     """Store a job in the database if new. Filters out non-remote and sales jobs.
 
-    Follows redirects and uses the *resolved* URL as the primary key so that
-    multiple job listings that all bounce to the same external landing page
-    (or generic career site) are deduplicated — at most one job per landing
-    URL gets stored.
+    Does a lightweight DNS check on the domain first — if the hostname
+    doesn't resolve (dead/mistyped domain), the job is skipped entirely
+    without any HTTP request.
     """
-    resolved = _resolve_url(url)
-    if resolved != url:
-        log.debug("URL resolved: %s -> %s", url, resolved)
+    if not _domain_resolves(url):
+        log.debug("Skipping %s — domain does not resolve", url)
+        return False
 
     if not _is_remote_location(location):
         return False
@@ -114,7 +111,7 @@ def _store_job(url: str, title: str, site: str, location: str | None = None,
             """INSERT OR IGNORE INTO jobs
                (url, title, site, strategy, discovered_at, location, application_url, full_description)
                VALUES (?, ?, ?, 'bigtech', ?, ?, ?, ?)""",
-            (resolved, title, site, now, location, apply_url, description),
+            (url, title, site, now, location, apply_url, description),
         )
         conn.commit()
         return conn.total_changes > 0
