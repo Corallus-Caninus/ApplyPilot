@@ -114,21 +114,36 @@ for i in range(workers):
         chrome_procs.append(proc)
         time.sleep(2)
 
-# ── Inject autofill script into Chrome via CDP ──────────────────────────
-# Fires on every new document/page load — fills cached fields automatically.
+# ── Inject autofill daemon into Chrome via CDP ─────────────────────────
+# Persistent daemon — monitors for new page/iframe targets and injects
+# autofill JS into each one.  Continues running alongside run_apply.py.
 _INJECT_SCRIPT = os.path.join(SCRIPT_DIR, "inject_autofill.py")
+_autofill_procs: list[subprocess.Popen] = []
 if os.path.exists(_INJECT_SCRIPT):
+    # Kill any stale autofill daemon from a previous run
+    try:
+        import subprocess as _sp, os as _os
+        _old = _sp.check_output(["pgrep", "-f", "inject_autofill"], timeout=5, text=True).strip()
+        for _pid in _old.split("\n"):
+            try:
+                _os.kill(int(_pid), 15)
+            except (OSError, ValueError, ProcessLookupError):
+                pass
+    except Exception:
+        pass
     for i in range(workers):
         port = BASE_CDP_PORT + i
-        for attempt in range(10):
+        for attempt in range(30):
             try:
                 import requests
                 r = requests.get(f"http://127.0.0.1:{port}/json/version", timeout=3)
                 if r.status_code == 200:
-                    subprocess.Popen(
+                    proc = subprocess.Popen(
                         [sys.executable, _INJECT_SCRIPT, str(port)],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        start_new_session=True,
                     )
+                    _autofill_procs.append(proc)
                     break
             except Exception:
                 time.sleep(1)
@@ -255,6 +270,11 @@ _t.Thread(target=_llama_health, daemon=True).start()
 # ── Cleanup on exit ────────────────────────────────────────────────────
 def _cleanup():
     for p in chrome_procs:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, AttributeError):
+            pass
+    for p in _autofill_procs:
         try:
             os.killpg(os.getpgid(p.pid), signal.SIGTERM)
         except (ProcessLookupError, PermissionError, AttributeError):
