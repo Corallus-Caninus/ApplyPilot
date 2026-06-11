@@ -273,9 +273,10 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         # only context_length + timeout overrides to prevent crashes.
         _cfg.setdefault("auxiliary", {}).setdefault("compression", {})
         _cfg["auxiliary"]["compression"]["context_length"] = 96000
-        # Short timeout so a slow summarization call falls back to message
-        # dropping instead of blocking the main request indefinitely.
-        _cfg["auxiliary"]["compression"]["timeout"] = 10
+        # Generous timeout (30 min) — the local model is slow at summarization
+        # with large context.  The message-dropping context_compressor runs
+        # independently and keeps sessions alive while summarization happens.
+        _cfg["auxiliary"]["compression"]["timeout"] = 1800
         # Register Playwright MCP server — Hermes manages its lifecycle.
         # Port 9516 to avoid conflicting with user's personal Hermes on 9515.
         # Use DIRECT assignment (not setdefault) to override user's global config
