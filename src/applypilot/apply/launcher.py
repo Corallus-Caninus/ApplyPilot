@@ -880,6 +880,30 @@ def reset_failed() -> int:
 # Per-job execution
 # ---------------------------------------------------------------------------
 
+def _kill_orphan_apply_agents() -> None:
+    """Kill any Hermes agents from previous run_apply instances.
+
+    Uses --pass-session-id as the marker — this flag is only present in
+    Hermes agents launched by applypilot, never in user-initiated sessions.
+    """
+    try:
+        _out = subprocess.check_output(
+            ["pgrep", "-f", "--", "--pass-session-id"],
+            timeout=5, text=True, stderr=subprocess.DEVNULL,
+        ).strip()
+        if _out:
+            for _pid in _out.split("\n"):
+                _pid = _pid.strip()
+                if _pid and _pid.isdigit():
+                    try:
+                        os.kill(int(_pid), signal.SIGTERM)
+                    except (OSError, ValueError):
+                        pass
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError,
+            FileNotFoundError):
+        pass
+
+
 def _save_session_id(url: str, session_id: str | None) -> None:
     """Persist the last Hermes session ID for a job so retries can pull history."""
     if not session_id:
@@ -1078,6 +1102,9 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         env["LLM_PROVIDER"] = provider
 
         try:
+            # Kill any orphaned Hermes agents from previous run_apply.py instances.
+            # They have --pass-session-id in their args (normal Hermes doesn't).
+            _kill_orphan_apply_agents()
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
