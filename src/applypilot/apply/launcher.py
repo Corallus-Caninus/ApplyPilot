@@ -278,7 +278,7 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         # Compression runs as the ONLY request on the server (preflight).
         # Give it a generous timeout so the LLM summary completes instead
         # of leaving a stale task that triggers should_stop on the next call.
-        _cfg["auxiliary"]["compression"]["timeout"] = 600  # 10 minutes
+        _cfg["auxiliary"]["compression"]["timeout"] = None  # no timeout — server is idle, only request running
         # Register Playwright MCP server — Hermes manages its lifecycle
         _cfg.setdefault("mcp_servers", {}).setdefault("playwright", {
             "command": "npx",
