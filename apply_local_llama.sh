@@ -71,8 +71,9 @@ case "$MODEL_FLAG" in
         MODEL="qwen3.5:9b"
         MODEL_LABEL="Qwen 3.5 9B (MTP)"
         MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-9B-MTP-Q4_K_M.gguf"
-        # 9B-MTP Q4_K_M ~5.6GB — self-drafts via MTP heads
-        MODEL_CTX=64000
+        # 9B-MTP Q4_K_M ~5.6GB — self-drafts via MTP heads, no separate draft
+        # 96K context — Hermes needs min 64K; 96K with self-MTP fits easily
+        MODEL_CTX=96000
         NGL=33
         MTP_FLAGS="--spec-type draft-mtp --spec-draft-n-max 3"
         ;;

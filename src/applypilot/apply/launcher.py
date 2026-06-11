@@ -245,7 +245,7 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         elif "lfm" in _model_name:
             _ctx = 128000   # MoE with 1B active → very small KV, full 128K fits
         elif "9b" in _model_name or "8b" in _model_name:
-            _ctx = 64000   # Hermes requires minimum 64K or exits with "Goodbye!"
+            _ctx = 96000   # self-MTP, no draft — fits with headroom
         else:
             _ctx = 64000
         _cfg.setdefault("model", {}).setdefault("context_length", _ctx)
@@ -256,7 +256,7 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         # instead of hitting the 64K wall and forcing a continuation restart.
         _cfg.setdefault("agent", {}).setdefault("context_compressor", {})
         _cfg["agent"]["context_compressor"]["enabled"] = True
-        _cfg["agent"]["context_compressor"]["threshold"] = 0.90
+        _cfg["agent"]["context_compressor"]["threshold"] = 0.80
         _cfg["compression"] = {
             "enabled": True,
         }
