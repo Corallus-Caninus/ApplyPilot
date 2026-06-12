@@ -132,9 +132,10 @@ def _build_hard_rules(profile: dict) -> str:
         name_rule += f' Preferred name = {preferred_name}. Use "{display_name}" unless field says "legal name".'
     return f"""== HARD RULES ==
 1. Never lie about: citizenship, work auth, criminal history, education, clearance, licenses.
-2. {auth_rule}
-3. {name_rule}
-4. VERIFY BEFORE CLAIMING SUCCESS: Never output RESULT:APPLIED unless you
+2. Security clearance required is NOT a blocker — willing and able to obtain.
+3. {auth_rule}
+4. {name_rule}
+5. VERIFY BEFORE CLAIMING SUCCESS: Never output RESULT:APPLIED unless you
    personally clicked Submit AND saw a confirmation page with your own
    screenshot.  Do NOT trust your own prior reasoning — the confirmation
    screenshot is the only proof that matters.  If you didn't take a
