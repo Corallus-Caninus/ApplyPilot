@@ -326,6 +326,107 @@ def scrape_anduril(queries: list[str] | None = None) -> dict:
     return {"new": n, "existing": e, "errors": err}
 
 
+def _lever_scrape(company: str) -> tuple[int, int, int]:
+    """Scrape a Lever-powered career page. Returns (new, existing, errors)."""
+    import json as _json
+    from urllib.request import Request, urlopen
+    url = f"https://api.lever.co/v0/postings/{company.lower()}?mode=json"
+    try:
+        req = Request(url, headers={"User-Agent": _USER_AGENT, "Accept": "application/json"})
+        resp = urlopen(req, timeout=15)
+        jobs = _json.loads(resp.read())
+    except Exception as e:
+        log.warning("Lever scrape failed for %s: %s", company, e)
+        return 0, 0, 1
+
+    if not isinstance(jobs, list):
+        return 0, 0, 1
+
+    new = 0
+    existing = 0
+    for job in jobs:
+        title = job.get("title", "") or ""
+        if not title:
+            continue
+        # Lever categories field can indicate remote
+        categories = job.get("categories", {}) or {}
+        commitment = (categories.get("commitment", "") or "").lower()
+        location = (categories.get("location", "") or "").strip()
+        # Lever jobs with "remote" in commitment or location
+        if "remote" not in commitment and "remote" not in location.lower():
+            # Let _store_job decide via is_remote_location
+            pass
+        job_id = job.get("id", "")
+        apply_url = job.get("applyUrl", "") or job.get("hostedUrl", "") or f"https://jobs.lever.co/{company.lower()}/{job_id}"
+        workplaces = job.get("workplaceType", "") or ""
+        # Lever's workplaceType: "remote", "hybrid", "on-site"
+        if workplaces and workplaces.lower() != "remote" and "remote" not in location.lower() and "remote" not in commitment:
+            continue
+        if _store_job(apply_url, title, company.capitalize(), location, apply_url):
+            new += 1
+        else:
+            existing += 1
+    return new, existing, 0
+
+
+# ── Greenhouse batch ─────────────────────────────────────────────────
+
+_GREENHOUSE_BOARDS: dict[str, str] = {
+    "Stripe": "stripe",
+    "MongoDB": "mongodb",
+    "Airbnb": "airbnb",
+    "Figma": "figma",
+    "GitLab": "gitlab",
+    "Cloudflare": "cloudflare",
+    "Twilio": "twilio",
+    "Asana": "asana",
+    "Pinterest": "pinterest",
+    "Reddit": "reddit",
+    "Dropbox": "dropbox",
+    "Discord": "discord",
+    "Coinbase": "coinbase",
+    "Instacart": "instacart",
+    "Vercel": "vercel",
+    "Datadog": "datadog",
+}
+
+def scrape_greenhouse_batch(queries: list[str] | None = None) -> dict:
+    """Run all registered Greenhouse scrapers. Returns aggregated counts."""
+    init_db()
+    total_new = 0
+    total_existing = 0
+    total_errors = 0
+    for name, board in _GREENHOUSE_BOARDS.items():
+        url = f"https://api.greenhouse.io/v1/boards/{board}/jobs"
+        n, e, err = _greenhouse_scrape(name, url)
+        total_new += n
+        total_existing += e
+        total_errors += err
+        if n:
+            log.info("  %s: %d new jobs", name, n)
+    return {"new": total_new, "existing": total_existing, "errors": total_errors}
+
+
+# ── Lever batch ──────────────────────────────────────────────────────
+
+_LEVER_COMPANIES = ["Palantir", "Toptal", "Neon"]
+
+def scrape_lever_batch(queries: list[str] | None = None) -> dict:
+    """Run all registered Lever scrapers. Returns aggregated counts."""
+    init_db()
+    total_new = 0
+    total_existing = 0
+    total_errors = 0
+    for company in _LEVER_COMPANIES:
+        n, e, err = _lever_scrape(company)
+        total_new += n
+        total_existing += e
+        total_errors += err
+        if n:
+            log.info("  %s: %d new jobs via Lever", company, n)
+    return {"new": total_new, "existing": total_existing, "errors": total_errors}
+
+
 # ── Oracle (Oracle Cloud HCM) ────────────────────────────────────────────
 
 ORACLE_SEARCH_URL = "https://careers.oracle.com/en/sites/jobsearch"
@@ -716,6 +817,8 @@ SCRAPERS = {
     "IBM": scrape_ibm,
     "AT&T": scrape_att,
     "Amazon": scrape_amazon,
+    "GreenhouseBatch": scrape_greenhouse_batch,
+    "LeverBatch": scrape_lever_batch,
 }
 
 
