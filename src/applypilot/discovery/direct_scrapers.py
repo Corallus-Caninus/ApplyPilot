@@ -305,6 +305,27 @@ def scrape_databricks(queries: list[str] | None = None) -> dict:
     return {"new": n, "existing": e, "errors": err}
 
 
+def scrape_anthropic(queries: list[str] | None = None) -> dict:
+    """Scrape Anthropic careers (Greenhouse)."""
+    init_db()
+    n, e, err = _greenhouse_scrape("Anthropic", "https://api.greenhouse.io/v1/boards/anthropic/jobs")
+    return {"new": n, "existing": e, "errors": err}
+
+
+def scrape_spacex(queries: list[str] | None = None) -> dict:
+    """Scrape SpaceX careers (Greenhouse)."""
+    init_db()
+    n, e, err = _greenhouse_scrape("SpaceX", "https://api.greenhouse.io/v1/boards/spacex/jobs")
+    return {"new": n, "existing": e, "errors": err}
+
+
+def scrape_anduril(queries: list[str] | None = None) -> dict:
+    """Scrape Anduril Industries careers (Greenhouse)."""
+    init_db()
+    n, e, err = _greenhouse_scrape("Anduril", "https://api.greenhouse.io/v1/boards/andurilindustries/jobs")
+    return {"new": n, "existing": e, "errors": err}
+
+
 # ── Oracle (Oracle Cloud HCM) ────────────────────────────────────────────
 
 ORACLE_SEARCH_URL = "https://careers.oracle.com/en/sites/jobsearch"
@@ -603,15 +624,98 @@ def scrape_att(queries: list[str] | None = None) -> dict:
     return {"new": new, "existing": existing, "errors": errors}
 
 
+# ── Amazon (public JSON API) ────────────────────────────────────────
+
+AMAZON_API = "https://www.amazon.jobs/en-gb/search.json"
+
+def scrape_amazon(queries: list[str] | None = None) -> dict:
+    """Scrape Amazon careers via their public JSON API.
+
+    Amazon's careers site exposes a search.json endpoint with full job data
+    including type (ONSITE/REMOTE/HYBRID), title, location, and description.
+    """
+    import json as _json
+    from urllib.request import Request, urlopen
+
+    init_db()
+    new = 0
+    existing = 0
+    errors = 0
+
+    seen_ids = set()
+    offset = 0
+    limit = 100
+    max_pages = 100
+
+    for page in range(max_pages):
+        try:
+            url = f"{AMAZON_API}?offset={offset}&result_limit={limit}"
+            req = Request(url, headers={"User-Agent": _USER_AGENT})
+            resp = urlopen(req, timeout=15)
+            data = _json.loads(resp.read())
+
+            jobs = data.get("jobs", [])
+            if not jobs:
+                break
+
+            for job in jobs:
+                job_id = job.get("id", "") or job.get("id_icims", "")
+                if not job_id or job_id in seen_ids:
+                    continue
+                seen_ids.add(job_id)
+
+                title = job.get("title", "").strip()
+                if not title:
+                    continue
+
+                # Check if remote
+                locs = job.get("locations", [])
+                is_remote = any('"type":"REMOTE"' in str(l) for l in locs)
+                # Some jobs have type REMOTE in the locations JSON
+                locations_text = job.get("location", "Remote" if is_remote else job.get("normalized_location", ""))
+                if not is_remote:
+                    # Check if any location has REMOTE type
+                    for l in locs:
+                        if isinstance(l, str) and '"type":"REMOTE"' in l:
+                            is_remote = True
+                            break
+                    if not is_remote:
+                        # Only accept jobs that are explicitly remote
+                        continue
+
+                job_path = job.get("job_path", "")
+                job_url = f"https://www.amazon.jobs{job_path}" if job_path else f"https://www.amazon.jobs/en-gb/jobs/{job_id}"
+
+                if _store_job(job_url, title, "Amazon", locations_text, job_url):
+                    new += 1
+                else:
+                    existing += 1
+
+            offset += limit
+            if len(jobs) < limit:
+                break
+
+        except Exception as e:
+            log.warning("Amazon scrape error at offset %d: %s", offset, e)
+            errors += 1
+            break
+
+    return {"new": new, "existing": existing, "errors": errors}
+
+
 # ── Runner registry ───────────────────────────────────────────────────────
 
 SCRAPERS = {
     "Microsoft": scrape_microsoft,
     "Google": scrape_google,
     "Databricks": scrape_databricks,
+    "Anthropic": scrape_anthropic,
+    "SpaceX": scrape_spacex,
+    "Anduril": scrape_anduril,
     "Oracle": scrape_oracle,
     "IBM": scrape_ibm,
     "AT&T": scrape_att,
+    "Amazon": scrape_amazon,
 }
 
 
