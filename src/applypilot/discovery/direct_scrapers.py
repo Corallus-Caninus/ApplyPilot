@@ -510,20 +510,14 @@ def scrape_att(queries: list[str] | None = None) -> dict:
                     await asyncio.sleep(4)
 
                     # Extract job cards from the DOM
-                    jobs = await page.evaluate("() => {" + """
-                        const results = [];
-                        const anchors = document.querySelectorAll('a[href*="/job/"]');
-                        for (const a of anchors) {
+                    jobs = await page.evaluate('''
+                        Array.from(document.querySelectorAll('a[href*="/job/"]')).map(a => {
                             const title = a.textContent.trim();
-                            const href = a.href;
-                            if (title && href) {
-                                const card = a.closest('[class*="job"], li, div');
-                                const location = card ? card.textContent.replace(title, '').trim() : '';
-                                results.push({title: title.substring(0,200), location: location.substring(0,100), href});
-                            }
-                        }
-                        return results;
-                    """ + ")" )
+                            const card = a.closest('[class*="job"], li, div');
+                            const location = card ? card.textContent.replace(title, '').trim().substring(0, 100) : '';
+                            return {title: title.substring(0,200), location, href: a.href};
+                        }).filter(j => j.title && j.href)
+                    ''')
 
                     seen = set()
                     for j in jobs:
