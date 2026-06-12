@@ -98,7 +98,7 @@ while true; do
         --parallel 1 \
         -b 32768 \
         --alias "${MODEL}" \
-        --timeout 1800 \
+        --timeout 3600 \
         ${MTP_FLAGS:-} \
         -c ${MODEL_CTX} \
         --host "$HOST" \
