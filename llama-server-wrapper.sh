@@ -75,6 +75,9 @@ info "Model:  $MODEL_GGUF"
 info "Log:    $LOG"
 
 while true; do
+    rm -f "$LOG"
+    fuser -k "${LLAMA_PORT}/tcp" 2>/dev/null || true
+    sleep 1
     info "Starting server instance..."
 
     env -i \
