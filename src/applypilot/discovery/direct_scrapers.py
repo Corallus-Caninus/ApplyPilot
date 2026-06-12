@@ -482,6 +482,7 @@ def scrape_ibm(queries: list[str] | None = None) -> dict:
                             i += 1
 
                         # Try to go to next page
+                        prev_count = len(seen_titles)
                         next_btn = await page.query_selector("a:has-text('Next'), button:has-text('Next')")
                         if not next_btn:
                             break
@@ -489,6 +490,22 @@ def scrape_ibm(queries: list[str] | None = None) -> dict:
                             await next_btn.click()
                             await asyncio.sleep(3)
                         except Exception:
+                            break
+                        # If no new jobs after clicking Next, we hit the last page
+                        text = await page.evaluate("() => document.body.innerText")
+                        lines = [l.strip() for l in text.split("\n") if l.strip()]
+                        new_count = 0
+                        i = 0
+                        while i < len(lines):
+                            line = lines[i]
+                            if line.startswith('"') and line.endswith('"'):
+                                title = line.strip('"')
+                                if title not in seen_titles:
+                                    new_count += 1
+                                i += 3
+                                continue
+                            i += 1
+                        if new_count == 0:
                             break
 
                 except Exception as e:
@@ -559,6 +576,7 @@ def scrape_att(queries: list[str] | None = None) -> dict:
                                 existing += 1
 
                         # Try to go to next page
+                        prev_count = len(seen_urls)
                         next_btn = await page.query_selector("a:has-text('Next'), button:has-text('Next'), [class*='next']:not([disabled])")
                         if not next_btn:
                             break
@@ -566,6 +584,12 @@ def scrape_att(queries: list[str] | None = None) -> dict:
                             await next_btn.click()
                             await asyncio.sleep(3)
                         except Exception:
+                            break
+                        # Check if new jobs loaded — if not, we hit the last page
+                        new_urls = await page.evaluate('''
+                            Array.from(document.querySelectorAll('a[href*="/job/"]')).map(a => a.href).filter(h => h)
+                        ''')
+                        if not any(u not in seen_urls for u in new_urls):
                             break
 
                 except Exception as e:
