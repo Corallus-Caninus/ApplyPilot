@@ -253,7 +253,7 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         # Raise the HTTP client timeout — the default 60s cuts off long
         # requests (prefill at 48 t/s × 7K tokens = ~145s), triggering
         # retry → should_stop loops on single-server setups.
-        _cfg.setdefault("providers", {}).setdefault("custom", {})["request_timeout_seconds"] = 3600
+        _cfg.setdefault("providers", {}).setdefault("custom", {})["request_timeout_seconds"] = 600
         # Enable LLM compression summarizer with context_length override.
         # The local llama-server runs with -c 96000, but the model's
         # detected n_ctx may be lower (24K), which triggers a ValueError
@@ -263,7 +263,7 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         # server is overloaded.
         _cfg.setdefault("agent", {}).setdefault("context_compressor", {})
         _cfg["agent"]["context_compressor"]["enabled"] = True
-        _cfg["agent"]["context_compressor"]["threshold"] = 0.80
+        _cfg["agent"]["context_compressor"]["threshold"] = 0.30
         _cfg["compression"] = {
             "enabled": True,
         }
