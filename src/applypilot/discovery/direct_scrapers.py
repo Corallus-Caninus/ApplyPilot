@@ -353,29 +353,43 @@ def scrape_oracle(queries: list[str] | None = None) -> dict:
                         await page.keyboard.press("Enter")
                         await asyncio.sleep(4)
 
-                    for data in job_bodies:
-                        body = data["body"]
-                        if "items" not in body:
-                            continue
-                        for item in body["items"]:
-                            reqs = item.get("requisitionList", [])
-                            for r in reqs:
-                                title = (r.get("Title") or "").strip()
-                                req_id = r.get("Id", "")
-                                if not title or not req_id:
-                                    continue
-                                # Build location string from available fields
-                                loc_parts = []
-                                loc = r.get("PrimaryLocation", "") or ""
-                                country = r.get("PrimaryLocationCountry", "") or ""
-                                if loc: loc_parts.append(loc)
-                                if country: loc_parts.append(country)
-                                location = ", ".join(loc_parts) if loc_parts else "Remote"
-                                url = f"https://careers.oracle.com/en/sites/jobsearch/job/{req_id}"
-                                if _store_job(url, title, "Oracle", location, url):
-                                    new += 1
-                                else:
-                                    existing += 1
+                    seen_ids = set()
+                    for page_num in range(10):
+                        # Process API responses captured for this page
+                        for data in job_bodies:
+                            body = data["body"]
+                            if "items" not in body:
+                                continue
+                            for item in body["items"]:
+                                reqs = item.get("requisitionList", [])
+                                for r in reqs:
+                                    req_id = r.get("Id", "")
+                                    if not req_id or req_id in seen_ids:
+                                        continue
+                                    seen_ids.add(req_id)
+                                    title = (r.get("Title") or "").strip()
+                                    loc_parts = []
+                                    loc = r.get("PrimaryLocation", "") or ""
+                                    country = r.get("PrimaryLocationCountry", "") or ""
+                                    if loc: loc_parts.append(loc)
+                                    if country: loc_parts.append(country)
+                                    location = ", ".join(loc_parts) if loc_parts else "Remote"
+                                    url = f"https://careers.oracle.com/en/sites/jobsearch/job/{req_id}"
+                                    if _store_job(url, title, "Oracle", location, url):
+                                        new += 1
+                                    else:
+                                        existing += 1
+
+                        # Try to go to next page
+                        job_bodies.clear()
+                        next_btn = await page.query_selector("button[aria-label*='Next'], a:has-text('Next'), [class*='next']:not([disabled])")
+                        if not next_btn:
+                            break
+                        try:
+                            await next_btn.click()
+                            await asyncio.sleep(3)
+                        except Exception:
+                            break
                 except Exception as e:
                     log.warning("Oracle query '%s' failed: %s", query, e)
                     errors += 1
@@ -443,27 +457,39 @@ def scrape_ibm(queries: list[str] | None = None) -> dict:
                             await page.keyboard.press("Enter")
                             await asyncio.sleep(4)
 
-                    # Extract job listings from page text
-                    text = await page.evaluate("() => document.body.innerText")
-                    lines = [l.strip() for l in text.split("\n") if l.strip()]
+                    # Paginate through all pages
+                    seen_titles = set()
+                    for page_num in range(20):
+                        text = await page.evaluate("() => document.body.innerText")
+                        lines = [l.strip() for l in text.split("\n") if l.strip()]
 
-                    i = 0
-                    while i < len(lines):
-                        line = lines[i]
-                        if line.startswith('"') and line.endswith('"'):
-                            title = line.strip('"')
-                            level = lines[i + 1] if i + 1 < len(lines) else ""
-                            location = lines[i + 2] if i + 2 < len(lines) else ""
-                            if level and location:
-                                # Get job URL from the link
-                                url = f"https://careers.ibm.com/en_US/careers/job?q={title}"
-                                if _store_job(url, title, "IBM", location, url):
-                                    new += 1
-                                else:
-                                    existing += 1
-                                i += 3
-                                continue
-                        i += 1
+                        i = 0
+                        while i < len(lines):
+                            line = lines[i]
+                            if line.startswith('"') and line.endswith('"'):
+                                title = line.strip('"')
+                                level = lines[i + 1] if i + 1 < len(lines) else ""
+                                location = lines[i + 2] if i + 2 < len(lines) else ""
+                                if level and location and title not in seen_titles:
+                                    seen_titles.add(title)
+                                    url = f"https://careers.ibm.com/en_US/careers/job?q={title}"
+                                    if _store_job(url, title, "IBM", location, url):
+                                        new += 1
+                                    else:
+                                        existing += 1
+                                    i += 3
+                                    continue
+                            i += 1
+
+                        # Try to go to next page
+                        next_btn = await page.query_selector("a:has-text('Next'), button:has-text('Next')")
+                        if not next_btn:
+                            break
+                        try:
+                            await next_btn.click()
+                            await asyncio.sleep(3)
+                        except Exception:
+                            break
 
                 except Exception as e:
                     log.warning("IBM query '%s' failed: %s", query, e)
@@ -511,27 +537,36 @@ def scrape_att(queries: list[str] | None = None) -> dict:
                     await asyncio.sleep(4)
 
                     # Extract job cards from the DOM
-                    jobs = await page.evaluate('''
-                        Array.from(document.querySelectorAll('a[href*="/job/"]')).map(a => {
-                            const title = a.textContent.trim();
-                            const card = a.closest('[class*="job"], li, div');
-                            const location = card ? card.textContent.replace(title, '').trim().substring(0, 100) : '';
-                            return {title: title.substring(0,200), location, href: a.href};
-                        }).filter(j => j.title && j.href)
-                    ''')
+                    seen_urls = set()
+                    for page_num in range(20):
+                        jobs = await page.evaluate('''
+                            Array.from(document.querySelectorAll('a[href*="/job/"]')).map(a => {
+                                const title = a.textContent.trim();
+                                const card = a.closest('[class*="job"], li, div');
+                                const location = card ? card.textContent.replace(title, '').trim().substring(0, 100) : '';
+                                return {title: title.substring(0,200), location, href: a.href};
+                            }).filter(j => j.title && j.href)
+                        ''')
 
-                    seen = set()
-                    for j in jobs:
-                        title = j["title"]
-                        loc = j["location"]
-                        url = j["href"]
-                        if not title or not url or url in seen:
-                            continue
-                        seen.add(url)
-                        if _store_job(url, title, "AT&T", loc, url):
-                            new += 1
-                        else:
-                            existing += 1
+                        for j in jobs:
+                            url = j["href"]
+                            if not url or url in seen_urls:
+                                continue
+                            seen_urls.add(url)
+                            if _store_job(url, j["title"], "AT&T", j["location"], url):
+                                new += 1
+                            else:
+                                existing += 1
+
+                        # Try to go to next page
+                        next_btn = await page.query_selector("a:has-text('Next'), button:has-text('Next'), [class*='next']:not([disabled])")
+                        if not next_btn:
+                            break
+                        try:
+                            await next_btn.click()
+                            await asyncio.sleep(3)
+                        except Exception:
+                            break
 
                 except Exception as e:
                     log.warning("AT&T query '%s' failed: %s", query, e)
