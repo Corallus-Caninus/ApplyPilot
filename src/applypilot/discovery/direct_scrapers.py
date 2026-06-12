@@ -161,11 +161,12 @@ def scrape_microsoft(queries: list[str] | None = None) -> dict:
 
             pos_id = pos.get("id", "")
             job_url = f"https://apply.careers.microsoft.com/careers/job/{pos_id}"
+            # Microsoft's API provides a workLocationOption field: onsite|hybrid|remote
+            if pos.get("workLocationOption") != "remote":
+                continue
             locations = ", ".join(pos.get("locations", [])) if pos.get("locations") else None
-            dept = pos.get("department", "")
-            description = f"Department: {dept}" if dept else None
 
-            if _store_job(job_url, title, "Microsoft", locations, job_url, description):
+            if _store_job(job_url, title, "Microsoft", locations, job_url):
                 new += 1
             else:
                 existing += 1
