@@ -1151,8 +1151,14 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                 reader_thread = Thread(target=_reader, daemon=True)
                 reader_thread.start()
 
-                proc.wait(timeout=None)
-                reader_thread.join(timeout=5)
+                try:
+                    proc.wait(timeout=3600)
+                except subprocess.TimeoutExpired:
+                    add_event(f"[W{worker_id}] Hermes timed out after 1h — saving session for continuation")
+                    proc.kill()
+                    proc.wait(timeout=5)
+                finally:
+                    reader_thread.join(timeout=5)
 
             returncode = proc.returncode
             proc = None
