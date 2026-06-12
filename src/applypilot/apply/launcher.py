@@ -276,7 +276,7 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         # Generous timeout (30 min) — the local model is slow at summarization
         # with large context.  The message-dropping context_compressor runs
         # independently and keeps sessions alive while summarization happens.
-        _cfg["auxiliary"]["compression"]["timeout"] = 1800
+        _cfg["auxiliary"]["compression"]["timeout"] = 600
         # Register Playwright MCP server — Hermes manages its lifecycle.
         # Port 9516 to avoid conflicting with user's personal Hermes on 9515.
         # Use DIRECT assignment (not setdefault) to override user's global config
