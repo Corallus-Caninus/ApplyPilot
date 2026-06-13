@@ -200,6 +200,8 @@ def _scrape_employer(
             title = j.get("title", "")
             if config.is_sales_job(title):
                 continue
+            if config.is_director_level(title):
+                continue
             if not config.is_computer_engineering_role(title):
                 continue
             all_jobs.append({

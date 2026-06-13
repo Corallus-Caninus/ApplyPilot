@@ -90,6 +90,9 @@ def _store_jobs_filtered(
         if config.is_sales_job(job.get("title")):
             filtered += 1
             continue
+        if config.is_director_level(job.get("title")):
+            filtered += 1
+            continue
         if not config.is_computer_engineering_role(job.get("title"), job.get("description")):
             filtered += 1
             continue

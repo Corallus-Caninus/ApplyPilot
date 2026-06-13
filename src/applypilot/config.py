@@ -302,6 +302,16 @@ def is_remote_location(location: str | None) -> bool:
     return False
 
 
+def is_director_level(title: str | None) -> bool:
+    """Check if a job title indicates a Director-level role — filter these out."""
+    if not title:
+        return False
+    t = title.lower()
+    if "director" in t:
+        return True
+    return False
+
+
 def is_sales_job(title: str | None) -> bool:
     """Check if a job title indicates a sales/business role — filter these out."""
     if not title:
