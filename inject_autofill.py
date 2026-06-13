@@ -181,13 +181,25 @@ def save_injected():
 
 
 # ── Main daemon loop ──────────────────────────────────────────────────────
+_RELOAD_INTERVAL = 15  # reload cache from DB every N poll cycles
+_reload_counter = 0
+
 def main():
-    global _injected
+    global _injected, cache, cache_json, _reload_counter
     load_injected()
     print(f"[autofill] Daemon started on port {CDP_PORT} ({len(cache)} fields, {len(_injected)} previously injected)", flush=True)
 
     while True:
         try:
+            # Periodically reload cache to pick up newly captured fields
+            _reload_counter += 1
+            if _reload_counter >= _RELOAD_INTERVAL:
+                _reload_counter = 0
+                new_cache = load_cache()
+                if len(new_cache) > len(cache):
+                    cache = new_cache
+                    cache_json = json.dumps(cache)
+                    print(f"[autofill] Cache updated: {len(cache)} fields", flush=True)
             targets = _req(f"http://127.0.0.1:{CDP_PORT}/json")
             if not isinstance(targets, list):
                 time.sleep(POLL_INTERVAL)
