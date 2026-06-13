@@ -214,12 +214,20 @@ def inject_target(ws_url: str) -> bool:
         ws.send(cmd1)
         resp1 = json.loads(ws.recv())
 
-        # Run on current page immediately (handles already-loaded pages)
+        # Run on current page immediately (handles already-loaded pages).
+        # Strip the v2 guard so it runs even if previously injected.
+        import re as _re
+        _fresh_js = _re.sub(
+            r'if\s*\(window\.__applypilot_autofill_v2\).*?\n',
+            '',
+            AUTOFILL_JS,
+            count=1,
+        )
         cmd2 = json.dumps({
             "id": 2,
             "method": "Runtime.evaluate",
             "params": {
-                "expression": f"(()=>{{{AUTOFILL_JS}}})()",
+                "expression": f"(()=>{{{_fresh_js}}})()",
                 "awaitPromise": False,
             }
         })
