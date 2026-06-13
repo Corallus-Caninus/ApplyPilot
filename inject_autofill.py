@@ -101,7 +101,12 @@ AUTOFILL_JS = f"""
       }} else if (e.isContentEditable) {{
         e.textContent = v; f++;
       }} else {{
-        e.value = v; f++;
+        // Use native value setter for React-controlled inputs
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype, 'value'
+        ).set;
+        if (setter) {{ setter.call(e, v); }} else {{ e.value = v; }}
+        f++;
       }}
       ['input','change','blur'].forEach(ev => e.dispatchEvent(new Event(ev,{{bubbles:true}})));
     }});
