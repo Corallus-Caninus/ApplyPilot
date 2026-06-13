@@ -98,6 +98,26 @@ AUTOFILL_JS = f"""
       }}
       ['input','change','blur'].forEach(ev => e.dispatchEvent(new Event(ev,{{bubbles:true}})));
     }});
+    // ── Handle comboboxes (div-based dropdowns like Greenhouse country) ──
+    document.querySelectorAll('[role="combobox"]').forEach(e => {{
+      const l = L(e); if (!l) return;
+      const key = l + '::' + (e.id || '');
+      if (filled.has(key)) return;
+      const v = C[l]; if (!v || e.value) return;
+      filled.add(key);
+      const root = e.closest('[class*="dropdown"],[class*="select"],[class*="field"],[class*="wrapper"]') || e.parentElement?.parentElement;
+      if (!root) return;
+      // Check if option list is already rendered
+      let lb = root.querySelector('[role="listbox"]');
+      if (lb) {{
+        const opt = [...lb.querySelectorAll('[role="option"]')].find(o => o.textContent.toLowerCase().includes(v.toLowerCase()));
+        if (opt) {{ opt.click(); f++; }}
+      }} else {{
+        // Click expand toggle so options render for the next pass
+        const btn = e.parentElement?.querySelector('button');
+        if (btn) btn.click();
+      }}
+    }});
     if (f) console.log('[autofill] Filled ' + f + ' field(s) on', window.location.href);
   }};
   if (document.readyState === 'loading') {{
