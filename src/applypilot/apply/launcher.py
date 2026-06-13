@@ -473,6 +473,7 @@ _stop_event = threading.Event()
 
 # Track active Claude Code processes for skip (Ctrl+C) handling
 _claude_procs: dict[int, subprocess.Popen] = {}
+_worker_current_jobs: dict[int, str] = {}  # worker_id → current job URL
 _claude_lock = threading.Lock()
 
 # Register cleanup on exit
@@ -712,7 +713,7 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                   AND (apply_error IS NULL OR apply_error NOT IN ('expired', 'captcha', 'login_issue',
                        'not_eligible_location', 'not_eligible_role', 'not_eligible_work_auth',
                        'not_a_job_application', 'unsupported_requirement', 'site_blocked',
-                       'already_applied'))
+                       'already_applied', 'no_result_line', 'skipped'))
                   AND (fit_score >= ? OR fit_score IS NULL)
                   {site_clause}
                   {url_clauses}
@@ -1477,6 +1478,7 @@ PERMANENT_FAILURES: set[str] = {
     "unsafe_verification", "sso_required",
     "site_blocked", "cloudflare_blocked", "blocked_by_cloudflare",
     "unsupported_requirement",
+    "skipped", "no_result_line",
 }
 
 PERMANENT_PREFIXES: tuple[str, ...] = ("site_blocked", "cloudflare", "blocked_by")
