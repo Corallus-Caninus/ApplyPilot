@@ -64,7 +64,7 @@ case "$MODEL_FLAG" in
         MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-4B-MTP-Q4_K_M.gguf"
         # 4B-MTP Q4_K_M ~2.7GB — self-drafts via MTP heads
         MODEL_CTX=245760
-        NGL=33
+        NGL=99
         MTP_FLAGS="--spec-type draft-mtp --spec-draft-n-max 3"
         ;;
     9b|9B|8b|8B)
@@ -72,21 +72,23 @@ case "$MODEL_FLAG" in
         MODEL_LABEL="Qwen 3.5 9B (MTP)"
         MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-9B-MTP-Q4_K_M.gguf"
         # 9B-MTP Q4_K_M ~5.6GB — self-drafts via MTP heads, no separate draft
-        # 128K context — Hermes needs min 64K; single parallel slot gives the
-        # full -c per request (was 24K before due to -c/4 with --parallel 4)
-        MODEL_CTX=98000
-        NGL=33
+        # 128K context — Hermes needs min 64K; 2 slots: main + compression
+        # summarizer, so summarization doesn't nuke the main KV cache.
+        MODEL_CTX=140000
+        NGL=99
         MTP_FLAGS="--spec-type draft-mtp --spec-draft-n-max 3"
         ;;
     9bd|9BD|9b-draft|9B-DRAFT)
         MODEL="qwen3.5:9b"
-        MODEL_LABEL="Qwen 3.5 9B (20-token spec-draft)"
+        MODEL_LABEL="Qwen 3.5 9B (30-token spec-draft)"
         MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-9B-MTP-Q4_K_M.gguf"
-        # 9B-MTP Q4_K_M ~5.6GB + 0.8B draft ~0.8GB
-        # 64K context — Hermes requires minimum 64K or it exits with "Goodbye!"
-        MODEL_CTX=64000
-        NGL=33
+        DRAFT_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-0.8B-Q8_0.gguf"
+        # 9B-MTP Q4_K_M ~5.6GB + 0.8B draft Q8_0 ~0.8GB
+        # 98K context — Hermes needs min 64K; draft is tiny so 98K fits
+        MODEL_CTX=98000
+        NGL=99
         MTP_FLAGS=""
+        DRAFT_FLAGS="--spec-type draft-model --model-draft ${DRAFT_GGUF} --spec-draft-n-max 30"
         ;;
     0.8b|0.8B|tiny|micro)
         MODEL="qwen3.5:0.8b"
@@ -94,7 +96,7 @@ case "$MODEL_FLAG" in
         MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-0.8B-MTP-Q8_0.gguf"
         # 0.8B Q8_0 ~0.8GB — tiny, no MTP (self-draft broken on 0.8B)
         MODEL_CTX=128000
-        NGL=33
+        NGL=99
         MTP_FLAGS=""
         ;;
     llama|Llama|llama3.1|llama-8b)
@@ -103,7 +105,7 @@ case "$MODEL_FLAG" in
         MODEL_GGUF="$HOME/Code/qwen_mi25/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
         # 8B Q4_K_M ~4.9GB — native 128K context, zero quirks
         MODEL_CTX=128000
-        NGL=33
+        NGL=99
         MTP_FLAGS=""
         ;;
     lfm|LFM|lfm2.5)
@@ -113,7 +115,7 @@ case "$MODEL_FLAG" in
         # Liquid AI LFM 2.5 — 8B MoE with 1B active params
         # Q4_K_M ~5.15GB — fits MI25 16GB with 128K KV cache
         MODEL_CTX=128000
-        NGL=33
+        NGL=99
         MTP_FLAGS=""
         ;;
     qwenmoe|QwenMOE|qwen3moe|qwen2x4b)
@@ -123,7 +125,7 @@ case "$MODEL_FLAG" in
         # Qwen3 MoE — 2 experts of 4B, 4B active per token
         # Q4_K_M ~4.13GB — fits MI25 with lots of KV cache headroom
         MODEL_CTX=128000
-        NGL=33
+        NGL=99
         MTP_FLAGS=""
         ;;
     hermes|Hermes|hermes3)
@@ -134,7 +136,7 @@ case "$MODEL_FLAG" in
         # Q4_K_M ~4.9GB + speculative draft ~1.3GB + both KV caches
         # = ~12GB total. Use 64K context to leave headroom.
         MODEL_CTX=64000
-        NGL=33
+        NGL=99
         MTP_FLAGS=""
         ;;
     *)
@@ -299,8 +301,8 @@ else
                 --cache-type-k q8_0 \
                 --cache-type-v q8_0 \
                 --reasoning off \
-                --temp 0.3 \
-                --parallel 1 \
+                --temp 0 \
+                --parallel 2 \
                 -b 32768 \
                 --alias "${MODEL}" \
                 --timeout 1800 \

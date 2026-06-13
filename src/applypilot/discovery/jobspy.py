@@ -543,6 +543,8 @@ def _run_one_search(
         str(row.get("title", "")) if str(row.get("title", "")) != "nan" else None,
     ) and not config.is_director_level(
         str(row.get("title", "")) if str(row.get("title", "")) != "nan" else None,
+    ) and not config.is_staff_plus(
+        str(row.get("title", "")) if str(row.get("title", "")) != "nan" else None,
     ) and config.is_computer_engineering_role(
         str(row.get("title", "")) if str(row.get("title", "")) != "nan" else None,
     ), axis=1)]

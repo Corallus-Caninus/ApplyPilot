@@ -2,6 +2,7 @@
 
 import os
 import platform
+import re
 import shutil
 from pathlib import Path
 
@@ -299,6 +300,29 @@ def is_remote_location(location: str | None) -> bool:
         return True
     if "work from home" in loc_lower or "wfh" in loc_lower or "distributed" in loc_lower:
         return True
+    return False
+
+
+def is_staff_plus(title: str | None) -> bool:
+    """Check if a job title is Staff level or above — filter these out."""
+    if not title:
+        return False
+    t = title.lower()
+    patterns = [
+        r'\bstaff\b',           # Staff, Senior Staff, Sr. Staff
+        r'\bprincipal\b',       # Principal, Associate Principal
+        r'\bdistinguished\b',   # Distinguished
+        r'\bfellow\b',          # Fellow
+        r'\bvp\b',              # VP
+        r'\bvice president\b',  # Vice President
+        r'\bv\.p\.\b',          # V.P.
+        r'\bchief\b',           # Chief Engineer, Chief Architect
+        r'\bcto\b|\bceo\b|\bcfo\b|\bcoo\b',  # C-Level
+        r'\bhead of\b',         # Head of
+    ]
+    for pat in patterns:
+        if re.search(pat, t):
+            return True
     return False
 
 

@@ -202,6 +202,8 @@ def _scrape_employer(
                 continue
             if config.is_director_level(title):
                 continue
+            if config.is_staff_plus(title):
+                continue
             if not config.is_computer_engineering_role(title):
                 continue
             all_jobs.append({

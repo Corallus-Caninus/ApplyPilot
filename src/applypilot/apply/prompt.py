@@ -384,6 +384,7 @@ FAILED:not_eligible_role | FAILED:unsupported_requirement | FAILED:reason
 - Phone: {phone_digits} | Date: {datetime.now().strftime('%m/%d/%Y')}
 - Calendar/datepicker? Don't click through months. Click the date field and TYPE the date directly (MM/DD/YYYY).
 - Already applied? If the page shows "already applied", "in process", "submitted" for this job -> RESULT:APPLIED immediately. The NEXT line must be the current page URL (so the system can verify you saw the right page).
+- Verification code gate? Some forms send an email code before allowing Submit. If you see "verification code", "security code", or "code sent to your email" fields: call email_search(query="companyname verification code") to find the message, email_read(msg_id) to get the code, fill the code field(s), then click Submit. Do NOT treat this as a failure — it's a normal step.
 - Validation errors? Snapshot messages, fix all, retry.
 - Stuck on field? Give best answer, move on.
 - TOOL MODAL STATE: If a tool returns an error like "Tool X does not handle the modal state"

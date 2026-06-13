@@ -10,6 +10,11 @@
 # Without this, a llama-server crash (non-zero exit) kills the entire script.
 MODEL_FLAG="${1:-9b}"
 LLAMA_PORT="${2:-11434}"
+# Handle --model <value> syntax
+if [[ "$1" == "--model" ]]; then
+    MODEL_FLAG="${2:-9b}"
+    LLAMA_PORT="${3:-11434}"
+fi
 HOST="127.0.0.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG="/tmp/llama_apply_qwen.log"
@@ -21,15 +26,31 @@ case "$MODEL_FLAG" in
         MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-4B-MTP-Q4_K_M.gguf"
         MTP_FLAGS="--spec-type draft-mtp --spec-draft-n-max 3"
         MODEL_CTX=245760
-        NGL=33
+        NGL=99
         MODEL="qwen3.5:4b"
         ;;
-    9b|9B|9bd|9BD|9b-draft|9B-DRAFT)
+    9b|9B)
         MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-9B-MTP-Q4_K_M.gguf"
         MTP_FLAGS="--spec-type draft-mtp --spec-draft-n-max 3"
-        MODEL_CTX=98000
-        NGL=33
+        MODEL_CTX=140000
+        NGL=99
         MODEL="qwen3.5:9b"
+        ;;
+    9bd|9BD|9b-draft|9B-DRAFT)
+        MODEL_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-9B-MTP-Q4_K_M.gguf"
+        DRAFT_GGUF="$HOME/Code/qwen_mi25/Qwen3.5-0.8B-Q8_0.gguf"
+        MTP_FLAGS=""
+        DRAFT_FLAGS="--spec-type draft-model --model-draft ${DRAFT_GGUF} --spec-draft-n-max 30"
+        MODEL_CTX=140000
+        NGL=99
+        MODEL="qwen3.5:9b"
+        ;;
+    lfm|LFM|lfm2.5)
+        MODEL_GGUF="$HOME/Code/qwen_mi25/LFM2.5-8B-A1B-Q4_K_M.gguf"
+        MTP_FLAGS=""
+        MODEL_CTX=128000
+        NGL=99
+        MODEL="lfm2.5:8b"
         ;;
     *)
         echo "Unknown model: $MODEL_FLAG"
@@ -94,12 +115,12 @@ while true; do
         --cache-type-k q8_0 \
         --cache-type-v q8_0 \
         --reasoning off \
-        --temp 0.3 \
-        --parallel 1 \
+        --temp 0 \
+        --parallel 2 \
         -b 32768 \
         --alias "${MODEL}" \
         --timeout 600 \
-        ${MTP_FLAGS:-} \
+        ${MTP_FLAGS:-} ${DRAFT_FLAGS:-} \
         -c ${MODEL_CTX} \
         --host "$HOST" \
         --port "$LLAMA_PORT" \

@@ -106,6 +106,8 @@ def _store_job(url: str, title: str, site: str, location: str | None = None,
         return False
     if config.is_director_level(title):
         return False
+    if config.is_staff_plus(title):
+        return False
     if not config.is_computer_engineering_role(title):
         return False
     conn = get_connection()

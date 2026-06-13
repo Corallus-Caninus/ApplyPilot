@@ -245,7 +245,7 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         elif "lfm" in _model_name:
             _ctx = 128000   # MoE with 1B active → very small KV, full 128K fits
         elif "9b" in _model_name or "8b" in _model_name:
-            _ctx = 98000    # self-MTP — 98K fits, monitor VRAM to gauge headroom
+            _ctx = 140000   # 50% threshold at 70K; Qwen3.5-9B native 128K handles it
         else:
             _ctx = 64000
         _cfg.setdefault("model", {}).setdefault("context_length", _ctx)
@@ -255,24 +255,27 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         # retry → should_stop loops on single-server setups.
         _cfg.setdefault("providers", {}).setdefault("custom", {})["request_timeout_seconds"] = 600
         # Enable LLM compression summarizer with context_length override.
-        # The local llama-server runs with -c 96000, but the model's
+        # The local llama-server runs with -c 98000, but the model's
         # detected n_ctx may be lower (24K), which triggers a ValueError
         # in Hermes' feasibility check (needs 64K minimum).  Overriding
         # context_length bypasses that check.  The timeout ensures
         # summarization fails fast and falls back gracefully if the
         # server is overloaded.
-        _cfg.setdefault("agent", {}).setdefault("context_compressor", {})
-        _cfg["agent"]["context_compressor"]["enabled"] = True
-        _cfg["agent"]["context_compressor"]["threshold"] = 0.30
         _cfg["compression"] = {
             "enabled": True,
+            "threshold": 0.50,     # compress at ~50% of 140K = ~70K tokens
+            "protect_first_n": 0,  # only protect system prompt (message 0)
+            "target_ratio": 0.05,  # tight tail budget (clamped to 0.10 by Hermes)
         }
+        # Remove stale agent.context_compressor config (wrong path —
+        # Hermes reads compression.threshold, not agent.context_compressor)
+        _cfg.setdefault("agent", {}).pop("context_compressor", None)
         # All auxiliary models (vision, web_extract, skills_hub, approval,
         # title_generation, etc.) use the apply agent's main model by
         # default — no separate model configs are set.  Compression gets
         # only context_length + timeout overrides to prevent crashes.
         _cfg.setdefault("auxiliary", {}).setdefault("compression", {})
-        _cfg["auxiliary"]["compression"]["context_length"] = 98000
+        _cfg["auxiliary"]["compression"]["context_length"] = 140000
         # Generous timeout (30 min) — the local model is slow at summarization
         # with large context.  The message-dropping context_compressor runs
         # independently and keeps sessions alive while summarization happens.
@@ -1151,14 +1154,8 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                 reader_thread = Thread(target=_reader, daemon=True)
                 reader_thread.start()
 
-                try:
-                    proc.wait(timeout=3600)
-                except subprocess.TimeoutExpired:
-                    add_event(f"[W{worker_id}] Hermes timed out after 1h — saving session for continuation")
-                    proc.kill()
-                    proc.wait(timeout=5)
-                finally:
-                    reader_thread.join(timeout=5)
+                proc.wait(timeout=7200)
+                reader_thread.join(timeout=5)
 
             returncode = proc.returncode
             proc = None
@@ -1166,6 +1163,18 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             output = "\n".join(stdout_lines)
             elapsed = int(time.time() - start)
             duration_ms = int((time.time() - overall_start) * 1000)
+
+        except subprocess.TimeoutExpired:
+            # 2-hour job timeout — kill and move on
+            _job_elapsed = int(time.time() - start)
+            add_event(f"[W{worker_id}] JOB TIMEOUT after {_job_elapsed // 60}m — killing")
+            if proc is not None:
+                proc.kill()
+                proc.wait(timeout=10)
+            proc = None
+            if reader_thread is not None:
+                reader_thread.join(timeout=5)
+            return "failed:job_timeout", int((time.time() - overall_start) * 1000)
 
             # Capture session ID from output for potential resume on retry
             if not session_id:
@@ -1184,33 +1193,41 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 
             # Scan output lines in REVERSE for agent's final RESULT
             output_lines = output.split("\n")
-            # Parse result lines — only match at LINE START so prompt text
-            # like "-> RESULT:CAPTCHA" or "| RESULT:APPLIED" isn't parsed.
+            # Parse result lines — scan REVERSE so the bot's final response
+            # (at the end of stdout) is found first, not prompt boilerplate.
+            # Use "in" so markdown (**RESULT:APPLIED**) and tool-wrapped
+            # output ({"output":"RESULT:FAILED:..."}) are detected.
             result_line = None
             result_idx = -1
-            for i, line in enumerate(output_lines):
+            for i in range(len(output_lines) - 1, -1, -1):
+                line = output_lines[i]
                 _s = line.strip()
-                if _s.startswith("RESULT:APPLIED"):
+                if "RESULT:APPLIED" in _s:
                     result_line = ("applied", "applied")
                     result_idx = i
-                    # keep scanning — last RESULT wins
-                elif _s.startswith("RESULT:FAILED:"):
+                    break
+                elif "RESULT:FAILED:" in _s:
                     reason = _s.split("RESULT:FAILED:", 1)[-1].strip()
                     reason = _clean_reason(reason)
                     result_line = (f"failed:{reason}", reason)
                     result_idx = i
-                elif _s.startswith("RESULT:FAILED"):
+                    break
+                elif "RESULT:FAILED" in _s:
                     result_line = ("failed:unknown", "unknown")
                     result_idx = i
-                elif _s.startswith("RESULT:EXPIRED"):
+                    break
+                elif "RESULT:EXPIRED" in _s:
                     result_line = ("expired", "expired")
                     result_idx = i
-                elif _s.startswith("RESULT:CAPTCHA"):
+                    break
+                elif "RESULT:CAPTCHA" in _s:
                     result_line = ("captcha", "captcha")
                     result_idx = i
-                elif _s.startswith("RESULT:LOGIN_ISSUE"):
+                    break
+                elif "RESULT:LOGIN_ISSUE" in _s:
                     result_line = ("login_issue", "login_issue")
                     result_idx = i
+                    break
 
             if result_line:
                 status_key, display_status = result_line
