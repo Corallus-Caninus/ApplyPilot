@@ -1073,6 +1073,53 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 
     worker_dir = reset_worker_dir(worker_id)
 
+    # ── Auto-navigate to the job URL before the model starts ───────────────
+    # Saves 2-3 API calls and lets the model start with full page context.
+    # The snapshot is appended to the initial prompt so it gets compressed
+    # away naturally (only the system prompt is retained during compression).
+    job_url = job.get("application_url") or job["url"]
+    try:
+        import urllib.request as _ur, json as _uj
+        _cdp_port = 9516 + worker_id
+        _targets = _uj.loads(_ur.urlopen(
+            f"http://127.0.0.1:{_cdp_port}/json", timeout=5).read())
+        # Find any page target (Chrome starts with about:blank)
+        _page_ws = None
+        for _t in _targets:
+            if _t.get("type") == "page":
+                _page_ws = _t.get("webSocketDebuggerUrl")
+                break
+        if _page_ws:
+            import websocket as _ws
+            _wsc = _ws.create_connection(_page_ws, timeout=15)
+            # Navigate to job URL
+            _nav_cmd = _uj.dumps({"id":1,"method":"Page.navigate",
+                "params":{"url": job_url}})
+            _wsc.send(_nav_cmd)
+            _nav_resp = _uj.loads(_wsc.recv())
+            _frame_id = _nav_resp.get("result",{}).get("frameId","")
+            # Wait for page to finish loading
+            import time as _ti
+            _ti.sleep(3)
+            # Extract page text content
+            _text_cmd = _uj.dumps({"id":2,"method":"Runtime.evaluate",
+                "params":{"expression":
+                    "document.body.innerText.substring(0,15000)"}})
+            _wsc.send(_text_cmd)
+            _text_resp = _uj.loads(_wsc.recv())
+            _page_text = (_text_resp.get("result",{}).get("result",{})
+                         .get("value",""))
+            _wsc.close()
+            if _page_text:
+                agent_prompt += (
+                    "\n\n== CURRENT PAGE STATE ==\n"
+                    "The browser has been pre-navigated to the job URL. "
+                    "Read the page content below — DO NOT navigate again.\n"
+                    f"{_page_text[:15000]}"
+                )
+    except Exception:
+        pass  # Non-critical — model will navigate itself
+
     update_state(worker_id, status="applying", job_title=job['title'],
                  company=job.get("site", ""), score=job.get("fit_score", 0),
                  start_time=time.time(), actions=0, last_action="starting")
