@@ -74,7 +74,10 @@ def _build_location_check(profile: dict, search_config: dict) -> str:
     primary_city = personal.get("city", location_cfg.get("primary", "your city"))
     city_list = ", ".join(accept_patterns) if accept_patterns else primary_city
     return f"""== LOCATION CHECK ==
-REMOTE jobs -> Always APPLY regardless of candidate location.
+REMOTE jobs in 5-eyes countries (US, UK, Canada, Australia, New Zealand),
+Europe, India, or Mexico -> APPLY.  Remote jobs mentioning other restricted
+countries (Singapore, Japan, Brazil, China, etc.) -> RESULT:FAILED:not_eligible_location — the
+job is tied to that country's payroll/entity and you need sponsorship there.
 ONSITE/HYBRID jobs whose work location is in: {city_list} -> APPLY.
 ONSITE/HYBRID jobs NOT in the above list + with "remote OK" in description -> APPLY.
 ONSITE/HYBRID jobs NOT in the above list and no "remote OK" -> RESULT:FAILED:not_eligible_location.
@@ -82,7 +85,8 @@ Overseas jobs + no remote -> SAME.
 If unknown -> proceed, answer screening honestly.
 
 IMPORTANT: This check is about the JOB's work location, not the candidate's
-home city.  A remote job is always eligible regardless of where you live."""
+home city.  A remote job is only eligible if its country is in the allowed
+list above."""
 
 
 def _build_salary_section(profile: dict) -> str:

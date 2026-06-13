@@ -290,10 +290,60 @@ def is_remote_location(location: str | None) -> bool:
     if not location:
         return True  # unknown location — keep it
     loc_lower = location.lower()
+
+    # Reject jobs in non-5-eyes, non-Europe countries even if remote.
+    # "Remote, India" or "Remote - Singapore" means the job is remote but
+    # based in a country where the candidate would need sponsorship.
+    RESTRICTED_COUNTRIES = [
+        'singapore', 'japan', 'brazil', 'colombia',
+        'saudi arabia', 'china', 'chile', 'uae', 'dubai',
+    ]
+    ALLOWED_COUNTRIES = [
+        'united states', 'usa', 'u.s.', 'canada', 'australia', 'new zealand',
+        'united kingdom', 'uk', 'england', 'scotland', 'wales',
+        'ireland', 'germany', 'france', 'netherlands', 'spain', 'italy',
+        'sweden', 'denmark', 'norway', 'finland', 'poland', 'switzerland',
+        'belgium', 'austria', 'czech', 'portugal', 'estonia', 'cyprus',
+        'europe', 'north america', 'americas', 'emea',
+        'india', 'mexico', 'bangalore',
+    ]
+    has_restricted = any(c in loc_lower for c in RESTRICTED_COUNTRIES)
+    has_allowed = any(c in loc_lower for c in ALLOWED_COUNTRIES)
+    if has_restricted and not has_allowed:
+        return False
+
     if "remote" in loc_lower:
         return True
-    if "united states" in loc_lower:
+    if "united states" in loc_lower or " usa" in loc_lower or loc_lower.startswith("usa"):
         return True  # broad US eligibility
+    # US state abbreviations and common US patterns
+    us_states = [
+        ' alaska', 'alabama', 'arkansas', 'arizona', 'california', 'colorado',
+        'connecticut', 'delaware', 'florida', 'georgia', 'hawaii', 'iowa',
+        'idaho', 'illinois', 'indiana', 'kansas', 'kentucky', 'louisiana',
+        'massachusetts', 'maryland', 'maine', 'michigan', 'minnesota',
+        'missouri', 'mississippi', 'montana', 'nebraska', 'nevada',
+        'new hampshire', 'new jersey', 'new mexico', 'new york',
+        'north carolina', 'north dakota', 'ohio', 'oklahoma', 'oregon',
+        'pennsylvania', 'rhode island', 'south carolina', 'south dakota',
+        'tennessee', 'texas', 'utah', 'virginia', 'vermont', 'washington',
+        'wisconsin', 'west virginia', 'wyoming',
+        # District + territories
+        'district of columbia',
+    ]
+    if any(s in loc_lower for s in us_states):
+        return True
+    # US state abbreviations (comma-prefixed to avoid false matches)
+    us_state_abbrevs = [
+        ', al', ', ak', ', az', ', ar', ', ca', ', co', ', ct', ', de', ', fl', ', ga',
+        ', hi', ', id', ', il', ', in', ', ia', ', ks', ', ky', ', la', ', me', ', md',
+        ', ma', ', mi', ', mn', ', ms', ', mo', ', mt', ', ne', ', nv', ', nh', ', nj',
+        ', nm', ', ny', ', nc', ', nd', ', oh', ', ok', ', or', ', pa', ', ri', ', sc',
+        ', sd', ', tn', ', tx', ', ut', ', vt', ', va', ', wa', ', wv', ', wi', ', wy',
+        ', dc',
+    ]
+    if any(abbr in loc_lower for abbr in us_state_abbrevs):
+        return True
     if "multiple locations" in loc_lower:
         return True  # multiple offices — often remote-flexible
     if "anywhere" in loc_lower:
