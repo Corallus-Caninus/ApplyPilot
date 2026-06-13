@@ -62,8 +62,9 @@ cache_json = json.dumps(cache)
 # Also watches for DOM mutations that add new form fields.
 AUTOFILL_JS = f"""
 (() => {{
-  if (window.__applypilot_autofill) return;
+  if (window.__applypilot_autofill_v2) return;
   window.__applypilot_autofill = Date.now();
+  window.__applypilot_autofill_v2 = Date.now();
   const C = {cache_json};
   const filled = new Set();  // never refill same field twice, even if cleared
   const N = s => typeof s === 'string' ? s.replace(/[*\\s_\\-]+/g,"").toLowerCase().trim() : '';
