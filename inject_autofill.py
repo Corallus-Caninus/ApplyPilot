@@ -129,10 +129,9 @@ AUTOFILL_JS = f"""
       }}
     }});
     // ── Universal country handler: click → type "1" → Enter ──
-    // Works for Greenhouse combos, intl-tel-input, native selects, etc.
+    // Always types "1" and Enter — no country name matching.
     (() => {{
-      const v = C['country'] || 'United States';
-      if (!v) return;
+      if (!C['country']) return;
       let el = document.querySelector(
         '[role="combobox"][aria-label*="country" i],' +
         '[aria-autocomplete="list"][aria-labelledby*="country" i],' +
@@ -145,11 +144,6 @@ AUTOFILL_JS = f"""
       const key = 'country' + '::' + (el.id || el.className || '');
       if (filled.has(key) || el.value) return;
       filled.add(key);
-      if (el.tagName === 'SELECT') {{
-        const opt = [...el.options].find(o => o.text.toLowerCase().includes(v.toLowerCase()));
-        if (opt) {{ el.value = opt.value; f++; }}
-        return;
-      }}
       el.click();
       el.focus();
       setTimeout(() => {{
