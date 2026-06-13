@@ -390,6 +390,7 @@ FAILED:not_eligible_role | FAILED:unsupported_requirement | FAILED:reason
 - TOOL MODAL STATE: If a tool returns an error like "Tool X does not handle the modal state"
   with "can be handled by Y", call tool Y IMMEDIATELY. Do NOT retry tool X — it will
   keep failing. The error message tells you exactly which tool to use.
+- Country/phone dropdown expanding with a massive list? Don't explore it — the 200+ options bloat the snapshot. Instead, use browser_run_code_unsafe with JS to set the value directly: await page.evaluate(() => document.querySelector('select[aria-label*="Country"]')?.value = 'US') or your best guess at the selector. If you can type into a search field, type "United States" immediately without opening the dropdown first.
 - Workday dropdown not clicking? First try fill_form(type="combobox") in one shot. If that fails, use browser_run_code_unsafe to set the value via JS directly (instant, one call). Last resort: type into searchable dropdowns.
 - File upload hidden? Click area first. If dialog gets stuck: Escape to dismiss, then retry.
 
