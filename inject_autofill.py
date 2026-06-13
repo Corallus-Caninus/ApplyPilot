@@ -144,19 +144,38 @@ def _req(url: str, timeout: float = 5) -> dict | list:
 
 
 def inject_target(ws_url: str) -> bool:
-    """Inject autofill JS into one CDP target via WebSocket."""
+    """Inject autofill JS into one CDP target via WebSocket.
+    
+    Uses addScriptToEvaluateOnNewDocument for future pages/iframes,
+    AND Runtime.evaluate for pages already loaded.
+    """
     try:
         import websocket
         ws = websocket.create_connection(ws_url, timeout=10)
-        cmd = json.dumps({
+
+        # Register for future documents
+        cmd1 = json.dumps({
             "id": 1,
             "method": "Page.addScriptToEvaluateOnNewDocument",
             "params": {"source": AUTOFILL_JS}
         })
-        ws.send(cmd)
-        resp = json.loads(ws.recv())
+        ws.send(cmd1)
+        resp1 = json.loads(ws.recv())
+
+        # Run on current page immediately (handles already-loaded pages)
+        cmd2 = json.dumps({
+            "id": 2,
+            "method": "Runtime.evaluate",
+            "params": {
+                "expression": f"(()=>{{{AUTOFILL_JS}}})()",
+                "awaitPromise": False,
+            }
+        })
+        ws.send(cmd2)
+        resp2 = json.loads(ws.recv())
+
         ws.close()
-        return "result" in resp
+        return "result" in resp1
     except Exception:
         return False
 
