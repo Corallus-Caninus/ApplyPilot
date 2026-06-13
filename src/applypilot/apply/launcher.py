@@ -485,6 +485,27 @@ if platform.system() != "Windows":
 # MCP config
 # ---------------------------------------------------------------------------
 
+def _cache_field(label: str, value: str, source_session: str = "") -> None:
+    """Save a single field→value pair to the field_cache table immediately."""
+    import re as _re
+    import sqlite3 as _sql
+    path = str(config.APP_DIR / "applypilot.db")
+    try:
+        norm = _re.sub(r"[*\s_\-]+", "", label).strip().lower()
+        val = value.strip()
+        if norm and val:
+            now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            db = _sql.connect(path)
+            db.execute(
+                "INSERT OR IGNORE INTO field_cache (label, value, created_at, updated_at, source_session) VALUES (?, ?, ?, ?, ?)",
+                (norm, val, now, now, source_session),
+            )
+            db.commit()
+            db.close()
+    except Exception:
+        pass
+
+
 def _capture_fields_async(worker_id: int, session_id: str = "") -> None:
     """Extract filled form fields from the agent's state.db and save to field cache.
     
@@ -1144,12 +1165,38 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                 lf.write(log_header)
 
                 def _reader():
+                    _fill_re = re.compile(
+                        r'Tool call: mcp_playwright_browser_fill_form with args:\s*(\{.*\})'
+                    )
+                    _select_re = re.compile(
+                        r'Tool call: mcp_playwright_browser_select_option with args:\s*(\{.*\})'
+                    )
                     for raw_line in proc.stdout:
                         line = raw_line.strip()
                         if not line:
                             continue
                         stdout_lines.append(line)
                         lf.write(line + "\n")
+                        # Real-time field caching — parse every tool call as it comes in
+                        try:
+                            _m = _fill_re.match(line)
+                            if _m:
+                                _args = json.loads(_m.group(1))
+                                for _f in _args.get("fields", []):
+                                    _label = _f.get("name") or _f.get("element", "")
+                                    _val = _f.get("value", "")
+                                    if _label and _val:
+                                        _cache_field(_label, _val, session_id or "")
+                                continue
+                            _m = _select_re.match(line)
+                            if _m:
+                                _args = json.loads(_m.group(1))
+                                _vals = _args.get("values", [])
+                                _target = _args.get("target", "")
+                                if _vals and _target:
+                                    _cache_field(_target, _vals[0], session_id or "")
+                        except Exception:
+                            pass
 
                 reader_thread = Thread(target=_reader, daemon=True)
                 reader_thread.start()
