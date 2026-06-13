@@ -27,17 +27,30 @@ def load_cache() -> dict:
     if os.path.exists(DB):
         try:
             conn = sqlite3.connect(DB)
+            # Create table if it doesn't exist
+            conn.execute("CREATE TABLE IF NOT EXISTS field_cache (label TEXT PRIMARY KEY, value TEXT)")
             for row in conn.execute("SELECT label, value FROM field_cache"):
                 key = row[0].strip().lower().replace("*", "").replace(" ", "")
                 val = row[1].strip()
                 if key and val:
                     cache[key] = val
             conn.close()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[autofill] DB error: {e}", flush=True)
     return cache
 
 cache = load_cache()
+
+# Auto-seed from profile if cache is empty
+if not cache:
+    try:
+        from seed_autofill_cache import seed
+        n = seed()
+        if n:
+            cache = load_cache()
+    except Exception:
+        pass
+
 if not cache:
     print("[autofill] No cached fields — exiting", flush=True)
     sys.exit(0)

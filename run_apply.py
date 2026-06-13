@@ -117,6 +117,13 @@ for i in range(workers):
 # ── Inject autofill daemon into Chrome via CDP ─────────────────────────
 # Persistent daemon — monitors for new page/iframe targets and injects
 # autofill JS into each one.  Continues running alongside run_apply.py.
+# First seed the field_cache from profile data so the daemon has data to work with.
+_SEED_SCRIPT = os.path.join(SCRIPT_DIR, "seed_autofill_cache.py")
+if os.path.exists(_SEED_SCRIPT):
+    try:
+        subprocess.run([sys.executable, _SEED_SCRIPT], timeout=30, capture_output=True)
+    except Exception:
+        pass
 _INJECT_SCRIPT = os.path.join(SCRIPT_DIR, "inject_autofill.py")
 _autofill_procs: list[subprocess.Popen] = []
 if os.path.exists(_INJECT_SCRIPT):
