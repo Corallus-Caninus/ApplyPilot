@@ -134,6 +134,7 @@ AUTOFILL_JS = f"""
       if (!C['country']) return;
       let el = document.querySelector(
         '[role="combobox"][aria-label*="country" i],' +
+        '[role="combobox"][id="country"],' +
         '[aria-autocomplete="list"][aria-labelledby*="country" i],' +
         '[aria-autocomplete="list"][id="country"],' +
         'select[aria-label*="country" i],' +
