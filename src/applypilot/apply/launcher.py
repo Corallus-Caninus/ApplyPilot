@@ -1564,10 +1564,9 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                 add_event(f"[W{worker_id}] Queue empty")
                 update_state(worker_id, status="done", last_action="queue empty")
                 break
-        else:
-            # Reset Ctrl+C counter — new job means the next Ctrl+C is a fresh skip
-            _ctrl_c_count = 0
+            # Continuous mode — increment poll counter, sleep, retry
             empty_polls += 1
+            _ctrl_c_count = 0
             update_state(worker_id, status="idle",
                          last_action=f"polling ({empty_polls})")
             if empty_polls == 1:
@@ -1577,7 +1576,10 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                 break  # Stop was requested during wait
             continue
 
+        # ── Job acquired — process it ──
         empty_polls = 0
+        # Reset Ctrl+C counter — new job means the next Ctrl+C is a fresh skip
+        _ctrl_c_count = 0
 
         # Reset hallucination retry counter when we move to a new job
         if job["url"] != last_job_url:
