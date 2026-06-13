@@ -474,6 +474,7 @@ _stop_event = threading.Event()
 # Track active Claude Code processes for skip (Ctrl+C) handling
 _claude_procs: dict[int, subprocess.Popen] = {}
 _worker_current_jobs: dict[int, str] = {}  # worker_id → current job URL
+_skip_requested: bool = False  # True when user presses Ctrl+C to skip current job
 _claude_lock = threading.Lock()
 
 # Register cleanup on exit
@@ -713,7 +714,7 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                   AND (apply_error IS NULL OR apply_error NOT IN ('expired', 'captcha', 'login_issue',
                        'not_eligible_location', 'not_eligible_role', 'not_eligible_work_auth',
                        'not_a_job_application', 'unsupported_requirement', 'site_blocked',
-                       'already_applied', 'no_result_line', 'skipped'))
+                       'already_applied'))
                   AND (fit_score >= ? OR fit_score IS NULL)
                   {site_clause}
                   {url_clauses}
@@ -1376,6 +1377,10 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                     _save_session_id(job["url"], session_id)
                     return display_status, duration_ms
 
+                # Check if the process was killed by a skip request
+                if _skip_requested:
+                    return "skipped", duration_ms
+
                 add_event(f"[W{worker_id}] FAILED ({elapsed}s): {display_status[:30]}")
                 update_state(worker_id, status="failed",
                              last_action=f"FAILED: {display_status[:25]}")
@@ -1478,7 +1483,6 @@ PERMANENT_FAILURES: set[str] = {
     "unsafe_verification", "sso_required",
     "site_blocked", "cloudflare_blocked", "blocked_by_cloudflare",
     "unsupported_requirement",
-    "skipped", "no_result_line",
 }
 
 PERMANENT_PREFIXES: tuple[str, ...] = ("site_blocked", "cloudflare", "blocked_by")
@@ -1543,6 +1547,10 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
         active_chain = [("", "")]
 
     while not _stop_event.is_set():
+        # Clear any pending skip request so the next Ctrl+C is fresh
+        global _skip_requested
+        _skip_requested = False
+
         if not continuous and jobs_done >= limit:
             break
 
@@ -1556,6 +1564,9 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                 add_event(f"[W{worker_id}] Queue empty")
                 update_state(worker_id, status="done", last_action="queue empty")
                 break
+        else:
+            # Reset Ctrl+C counter — new job means the next Ctrl+C is a fresh skip
+            _ctrl_c_count = 0
             empty_polls += 1
             update_state(worker_id, status="idle",
                          last_action=f"polling ({empty_polls})")
@@ -1774,6 +1785,8 @@ def main(limit: int = 1, target_url: str | None = None,
         nonlocal _ctrl_c_count
         _ctrl_c_count += 1
         if _ctrl_c_count == 1:
+            global _skip_requested
+            _skip_requested = True
             console.print("\n[yellow]Skipping current job(s)... (Ctrl+C again to STOP)[/yellow]")
             # Kill all active Claude processes to skip current jobs
             with _claude_lock:
