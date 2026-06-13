@@ -1098,10 +1098,23 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             _wsc.send(_nav_cmd)
             _nav_resp = _uj.loads(_wsc.recv())
             _frame_id = _nav_resp.get("result",{}).get("frameId","")
-            # Wait for page to finish loading
+            # Wait for autofill to complete (polls for filled first_name)
             import time as _ti
-            _ti.sleep(3)
-            # Extract page text content
+            _af_waited = 0
+            for _attempt in range(15):
+                _ti.sleep(0.7)
+                _af_waited += 0.7
+                _check_cmd = _uj.dumps({"id":3,"method":"Runtime.evaluate",
+                    "params":{"expression":
+                        "document.getElementById('first_name')?.value || ''"}})
+                _wsc.send(_check_cmd)
+                _check_resp = _uj.loads(_wsc.recv())
+                _val = (_check_resp.get("result",{}).get("result",{})
+                       .get("value",""))
+                if _val:
+                    print(f"[auto-nav] Autofill completed in {_af_waited:.1f}s — capturing page state")
+                    break
+            # Extract page text content (after autofill)
             _text_cmd = _uj.dumps({"id":2,"method":"Runtime.evaluate",
                 "params":{"expression":
                     "document.body.innerText.substring(0,15000)"}})
