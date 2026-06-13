@@ -1174,9 +1174,10 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             proc = None
             if reader_thread is not None:
                 reader_thread.join(timeout=5)
+            _capture_fields_async(worker_id, session_id or "")
             return "failed:job_timeout", int((time.time() - overall_start) * 1000)
 
-            # Capture session ID from output for potential resume on retry
+        # Capture session ID from output for potential resume on retry
             if not session_id:
                 for _line in stdout_lines:
                     _m = __import__('re').search(r'session=(\S+)', _line)
@@ -1323,12 +1324,14 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                     add_event(f"[W{worker_id}] {display_status.upper()} ({elapsed}s): {job['title'][:30]}")
                     update_state(worker_id, status=display_status,
                                  last_action=f"{display_status.upper()} ({elapsed}s)")
+                    _capture_fields_async(worker_id, session_id or "")
                     _save_session_id(job["url"], session_id)
                     return display_status, duration_ms
 
                 add_event(f"[W{worker_id}] FAILED ({elapsed}s): {display_status[:30]}")
                 update_state(worker_id, status="failed",
                              last_action=f"FAILED: {display_status[:25]}")
+                _capture_fields_async(worker_id, session_id or "")
                 _save_session_id(job["url"], session_id)
                 return status_key, duration_ms
 
