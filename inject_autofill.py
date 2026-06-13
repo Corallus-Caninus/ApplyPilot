@@ -71,6 +71,12 @@ AUTOFILL_JS = f"""
   const L = e => {{
     let l = e.getAttribute('aria-label') || e.getAttribute('label');
     if (l) return N(l);
+    // aria-labelledby references a label element by ID
+    const lb = e.getAttribute('aria-labelledby');
+    if (lb) {{
+      const lEl = document.getElementById(lb);
+      if (lEl && lEl.textContent) return N(lEl.textContent);
+    }}
     const i = e.id && document.querySelector('label[for="' + e.id + '"]');
     if (i) {{ l = i.textContent; if (l) return N(l); }}
     l = e.getAttribute('placeholder') || e.getAttribute('name');
@@ -100,7 +106,7 @@ AUTOFILL_JS = f"""
       ['input','change','blur'].forEach(ev => e.dispatchEvent(new Event(ev,{{bubbles:true}})));
     }});
     // ── Handle comboboxes (div-based dropdowns like Greenhouse country) ──
-    document.querySelectorAll('[role="combobox"]').forEach(e => {{
+    document.querySelectorAll('[role="combobox"],[aria-autocomplete="list"]').forEach(e => {{
       const l = L(e); if (!l) return;
       const key = l + '::' + (e.id || '');
       if (filled.has(key)) return;
@@ -108,17 +114,57 @@ AUTOFILL_JS = f"""
       filled.add(key);
       const root = e.closest('[class*="dropdown"],[class*="select"],[class*="field"],[class*="wrapper"]') || e.parentElement?.parentElement;
       if (!root) return;
-      // Check if option list is already rendered
       let lb = root.querySelector('[role="listbox"]');
       if (lb) {{
         const opt = [...lb.querySelectorAll('[role="option"]')].find(o => o.textContent.toLowerCase().includes(v.toLowerCase()));
         if (opt) {{ opt.click(); f++; }}
       }} else {{
-        // Click expand toggle so options render for the next pass
         const btn = e.parentElement?.querySelector('button');
         if (btn) btn.click();
       }}
     }});
+    // ── Universal country handler: click → type "1" → Enter ──
+    // Works for Greenhouse combos, intl-tel-input, native selects, etc.
+    (() => {{
+      const v = C['country'] || 'United States';
+      if (!v) return;
+      let el = document.querySelector(
+        '[role="combobox"][aria-label*="country" i],' +
+        '[aria-autocomplete="list"][aria-labelledby*="country" i],' +
+        '[aria-autocomplete="list"][id="country"],' +
+        'select[aria-label*="country" i],' +
+        '.iti__selected-flag,' +
+        'input#country'
+      );
+      if (!el) return;
+      const key = 'country' + '::' + (el.id || el.className || '');
+      if (filled.has(key) || el.value) return;
+      filled.add(key);
+      if (el.tagName === 'SELECT') {{
+        const opt = [...el.options].find(o => o.text.toLowerCase().includes(v.toLowerCase()));
+        if (opt) {{ el.value = opt.value; f++; }}
+        return;
+      }}
+      el.click();
+      el.focus();
+      setTimeout(() => {{
+        const input = document.querySelector(
+          '.iti__search-input,' +
+          'input[type="text"]:focus,' +
+          '[role="combobox"]:focus ~ input[type="text"],' +
+          '[role="combobox"]:focus + * input[type="text"]'
+        ) || document.activeElement;
+        if (input && input !== document.body && typeof input.value === 'string') {{
+          const setter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value'
+          ).set;
+          if (setter) {{ setter.call(input, '1'); f++; }}
+          input.dispatchEvent(new Event('input', {{bubbles:true}}));
+          input.dispatchEvent(new KeyboardEvent('keydown', {{key:'Enter', bubbles:true, cancelable:true}}));
+          input.dispatchEvent(new KeyboardEvent('keyup', {{key:'Enter', bubbles:true, cancelable:true}}));
+        }}
+      }}, 200);
+    }})();
     if (f) console.log('[autofill] Filled ' + f + ' field(s) on', window.location.href);
   }};
   if (document.readyState === 'loading') {{
@@ -220,6 +266,7 @@ def main():
                     cache = new_cache
                     cache_json = json.dumps(cache)
                     print(f"[autofill] Cache updated: {len(cache)} fields", flush=True)
+
             targets = _req(f"http://127.0.0.1:{CDP_PORT}/json")
             if not isinstance(targets, list):
                 time.sleep(POLL_INTERVAL)
