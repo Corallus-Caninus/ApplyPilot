@@ -255,7 +255,7 @@ def save_injected():
 
 
 # ── Main daemon loop ──────────────────────────────────────────────────────
-_RELOAD_INTERVAL = 15  # reload cache from DB every N poll cycles
+_RELOAD_INTERVAL = 1  # reload cache from DB every poll cycle (every ~2s)
 _reload_counter = 0
 
 def main():
