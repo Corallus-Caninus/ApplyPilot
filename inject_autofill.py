@@ -28,7 +28,13 @@ def load_cache() -> dict:
         try:
             conn = sqlite3.connect(DB)
             # Create table if it doesn't exist
-            conn.execute("CREATE TABLE IF NOT EXISTS field_cache (label TEXT PRIMARY KEY, value TEXT)")
+            conn.execute("CREATE TABLE IF NOT EXISTS field_cache (label TEXT PRIMARY KEY, value TEXT, created_at TEXT, updated_at TEXT, source_session TEXT)")
+            # Add missing columns for existing databases
+            for _col in ('created_at', 'updated_at', 'source_session'):
+                try:
+                    conn.execute(f"ALTER TABLE field_cache ADD COLUMN {_col} TEXT")
+                except Exception:
+                    pass  # Column already exists
             for row in conn.execute("SELECT label, value FROM field_cache"):
                 key = row[0].strip().lower().replace("*", "").replace(" ", "")
                 val = row[1].strip()
