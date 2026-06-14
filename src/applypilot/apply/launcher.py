@@ -263,7 +263,7 @@ def _build_provider_cmd(hermes_path: str, provider: str, model: str,
         # server is overloaded.
         _cfg["compression"] = {
             "enabled": True,
-            "threshold": 0.40,     # compress at ~40% of 140K = ~56K tokens (70K VRAM cap per slot)
+            "threshold": 0.40,     # compress at ~40% of 140K = ~56K tokens (70K VRAM cap per slot → 14K headroom)
             "protect_first_n": 0,  # only protect system prompt (message 0)
             "target_ratio": 0.05,  # tight tail budget (clamped to 0.10 by Hermes)
         }
